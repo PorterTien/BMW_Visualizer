@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import Navbar from './components/Navbar'
 import Sidebar from './components/Sidebar'
 import CompanyMap from './components/CompanyMap'
@@ -18,8 +18,24 @@ export default function App() {
   const [highlightCompany, setHighlightCompany] = useState(null)
   const [seeding, setSeeding] = useState(false)
   const [seedBanner, setSeedBanner] = useState(false)
+  const seedPollRef = useRef(null)
 
-  // Check if DB is empty on first load
+  // Dark mode — persisted in localStorage
+  const [darkMode, setDarkMode] = useState(() => {
+    const saved = localStorage.getItem('bmw-dark-mode')
+    return saved === 'true'
+  })
+
+  useEffect(() => {
+    const root = document.documentElement
+    if (darkMode) {
+      root.classList.add('dark')
+    } else {
+      root.classList.remove('dark')
+    }
+    localStorage.setItem('bmw-dark-mode', darkMode)
+  }, [darkMode])
+
   useEffect(() => {
     getSeedStatus()
       .then(({ data }) => {
@@ -28,10 +44,10 @@ export default function App() {
           setSeeding(true)
           triggerSeed()
             .then(() => {
-              const poll = setInterval(() => {
+              seedPollRef.current = setInterval(() => {
                 getSeedStatus().then(({ data: s }) => {
                   if (s.seeded) {
-                    clearInterval(poll)
+                    clearInterval(seedPollRef.current)
                     setSeeding(false)
                     setSeedBanner(false)
                   }
@@ -42,13 +58,22 @@ export default function App() {
         }
       })
       .catch(() => {})
+    return () => clearInterval(seedPollRef.current)
   }, [])
+
+  const handleSelectCompany = useCallback((id) => setSelectedCompanyId(id), [])
+  const handleCloseDetail = useCallback(() => setSelectedCompanyId(null), [])
 
   const showSidebar = activeTab === 'map' || activeTab === 'table'
 
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-[#F0F4F8]">
-      <Navbar activeTab={activeTab} setActiveTab={setActiveTab} />
+      <Navbar
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        darkMode={darkMode}
+        setDarkMode={setDarkMode}
+      />
 
       {/* Seeding banner */}
       {seedBanner && (
@@ -58,7 +83,7 @@ export default function App() {
         </div>
       )}
 
-      <div className="flex flex-1 overflow-y-hidden">
+      <div className="flex flex-1 overflow-hidden min-h-0">
         {/* Sidebar — only for map and table views */}
         {showSidebar && (
           <Sidebar
@@ -71,34 +96,30 @@ export default function App() {
         )}
 
         {/* Main content */}
-        <main className="flex-1 min-w-0 flex flex-col">
+        <main className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden">
           {activeTab === 'map' && (
             <CompanyMap
               filters={filters}
-              onSelectCompany={(id) => setSelectedCompanyId(id)}
+              onSelectCompany={handleSelectCompany}
               highlightName={highlightCompany}
+              darkMode={darkMode}
             />
           )}
           {activeTab === 'table' && <CompanyTable filters={filters} />}
           {activeTab === 'news' && <NewsFeed />}
           {activeTab === 'network' && (
-            <PartnershipNetwork
-              onSelectCompany={(id) => {
-                setSelectedCompanyId(id)
-                setActiveTab('table')
-              }}
-            />
+            <PartnershipNetwork onSelectCompany={handleSelectCompany} darkMode={darkMode} />
           )}
           {activeTab === 'research' && <ResearchPanel />}
           {activeTab === 'proceedings' && <Proceedings />}
         </main>
       </div>
 
-      {/* Global company detail panel (from map clicks or network) */}
-      {selectedCompanyId && activeTab === 'map' && (
+      {/* Global company detail panel (map, network) */}
+      {selectedCompanyId && (
         <CompanyDetail
           companyId={selectedCompanyId}
-          onClose={() => setSelectedCompanyId(null)}
+          onClose={handleCloseDetail}
         />
       )}
     </div>

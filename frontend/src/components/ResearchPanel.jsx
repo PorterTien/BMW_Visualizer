@@ -5,6 +5,7 @@ import {
   bulkResearch,
   uploadCSV,
   uploadDocument,
+  uploadPartnerships,
   getJob,
   listJobs,
   customSearch,
@@ -127,6 +128,10 @@ export default function ResearchPanel() {
   const [docJobId, setDocJobId] = useState(null)
   const [docResult, setDocResult] = useState(null)
 
+  // PitchBook / Crunchbase import
+  const [pbUploading, setPbUploading] = useState(false)
+  const [pbResult, setPbResult] = useState(null)
+
   // Job queue
   const [jobs, setJobs] = useState([])
 
@@ -228,6 +233,19 @@ export default function ResearchPanel() {
       setDocResult({ error: e.message })
     }
     setDocUploading(false)
+  }
+
+  async function handlePbUpload(file) {
+    setPbUploading(true)
+    setPbResult(null)
+    try {
+      const { data } = await uploadPartnerships(file)
+      setPbResult(data)
+    } catch (e) {
+      const msg = e.response?.data?.detail || e.message
+      setPbResult({ error: msg })
+    }
+    setPbUploading(false)
   }
 
   return (
@@ -424,6 +442,45 @@ export default function ResearchPanel() {
               )}
               {researchResult?.news_count !== undefined && (
                 <div className="text-xs text-gray-400">+ {researchResult.news_count} news articles saved to News Feed</div>
+              )}
+            </div>
+          )}
+        </Section>
+
+        {/* PitchBook / Crunchbase Import */}
+        <Section title="Import from PitchBook or Crunchbase">
+          <p className="text-xs text-gray-500 mb-3">
+            Export a company list, deals sheet, or funding rounds CSV/XLSX from PitchBook or Crunchbase
+            and drop it here. The format is auto-detected and partnerships are wired into the network graph.
+          </p>
+          <div className="text-xs text-gray-400 mb-3 space-y-1">
+            <div className="font-medium text-gray-500">Supported exports:</div>
+            <div className="grid grid-cols-2 gap-x-4">
+              <span>· PitchBook — Company List</span>
+              <span>· PitchBook — Deals</span>
+              <span>· Crunchbase — Organizations</span>
+              <span>· Crunchbase — Funding Rounds</span>
+            </div>
+          </div>
+          <DropZone
+            label="PitchBook or Crunchbase export (.csv or .xlsx)"
+            accept=".csv,.xlsx"
+            onUpload={handlePbUpload}
+            uploading={pbUploading}
+          />
+          {pbResult && (
+            <div className="mt-3 text-xs rounded-lg p-3 border border-[#B8CAD1] bg-[#F0F4F8]">
+              {pbResult.error ? (
+                <span className="text-red-500">{pbResult.error}</span>
+              ) : (
+                <div className="space-y-1">
+                  <div className="font-medium text-gray-700">{pbResult.source}</div>
+                  <div className="text-gray-600">
+                    {pbResult.companies_added} companies added · {pbResult.companies_updated} updated
+                    {pbResult.partnerships_added > 0 && ` · ${pbResult.partnerships_added} partnerships linked`}
+                  </div>
+                  <div className="text-gray-400">Refresh the Partnership Network tab to see changes.</div>
+                </div>
               )}
             </div>
           )}

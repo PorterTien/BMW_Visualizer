@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, Text, Float, ForeignKey
+from sqlalchemy import Column, Index, Integer, Text, Float, ForeignKey
 from backend.database import Base
 
 
@@ -20,14 +20,28 @@ class Company(Base):
     keywords = Column(Text)                   # JSON array
     announced_partners = Column(Text)         # JSON array of objects
     number_of_employees = Column(Integer)
+    market_cap_usd = Column(Float)        # in millions USD
+    revenue_usd = Column(Float)           # in millions USD
+    total_funding_usd = Column(Float)     # in millions USD
     last_fundraise_date = Column(Text)
     company_website = Column(Text)
+    hq_company = Column(Text)             # parent company name
+    hq_company_website = Column(Text)
+    chemistries = Column(Text)            # battery chemistries (comma-separated)
+    feedstock = Column(Text)              # feedstock / raw material input
+    contact_name = Column(Text)
+    contact_email = Column(Text)
+    contact_phone = Column(Text)
+    notes = Column(Text)
     summary = Column(Text)
     long_description = Column(Text)
     naatbatt_member = Column(Integer, default=0)
     naatbatt_id = Column(Text)
     last_updated = Column(Text)
     data_source = Column(Text)
+
+
+Index("ix_company_name", Company.company_name)
 
 
 class NewsHeadline(Base):
@@ -46,6 +60,9 @@ class NewsHeadline(Base):
     url = Column(Text)
     summary = Column(Text)
     created_at = Column(Text)
+
+
+Index("ix_news_company_id", NewsHeadline.company_id)
 
 
 class ConferenceProceeding(Base):
@@ -67,6 +84,9 @@ class ConferenceProceeding(Base):
     file_path = Column(Text)
     topics = Column(Text)                     # JSON array
     created_at = Column(Text)
+
+
+Index("ix_proceedings_company_id", ConferenceProceeding.company_id)
 
 
 class SyncLog(Base):

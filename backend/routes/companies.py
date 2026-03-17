@@ -33,8 +33,19 @@ def _company_dict(c: Company) -> dict:
         "keywords": json.loads(c.keywords or "[]"),
         "announced_partners": json.loads(c.announced_partners or "[]"),
         "number_of_employees": c.number_of_employees,
+        "market_cap_usd": c.market_cap_usd,
+        "revenue_usd": c.revenue_usd,
+        "total_funding_usd": c.total_funding_usd,
         "last_fundraise_date": c.last_fundraise_date,
         "company_website": c.company_website,
+        "hq_company": c.hq_company,
+        "hq_company_website": c.hq_company_website,
+        "chemistries": c.chemistries,
+        "feedstock": c.feedstock,
+        "contact_name": c.contact_name,
+        "contact_email": c.contact_email,
+        "contact_phone": c.contact_phone,
+        "notes": c.notes,
         "summary": c.summary,
         "long_description": c.long_description,
         "naatbatt_member": bool(c.naatbatt_member),
@@ -100,25 +111,49 @@ def companies_network(db: Session = Depends(get_db)):
     companies = db.query(Company).all()
     nodes = []
     links = []
-    company_index = {}
+    company_index: dict[str, int] = {}  # name_lower -> node id
+    virtual_id = -1
+    seen_links: set[tuple] = set()
 
     for c in companies:
-        node = {
+        nodes.append({
             "id": c.id,
             "name": c.company_name,
             "type": c.company_type,
-            "employees": c.number_of_employees or 10,
+            "employees": c.number_of_employees,
+            "market_cap_usd": c.market_cap_usd,
+            "revenue_usd": c.revenue_usd,
+            "total_funding_usd": c.total_funding_usd,
             "segment": c.supply_chain_segment,
-        }
-        nodes.append(node)
+            "in_db": True,
+        })
         company_index[c.company_name.lower()] = c.id
 
+    # Build links; create virtual nodes for external partners not in DB
     for c in companies:
         partners = json.loads(c.announced_partners or "[]")
         for p in partners:
-            partner_name = p.get("partner_name", "")
+            partner_name = (p.get("partner_name") or "").strip()
+            if not partner_name:
+                continue
             pid = company_index.get(partner_name.lower())
-            if pid:
+            if pid is None:
+                # Create a virtual node for this external partner
+                pid = virtual_id
+                virtual_id -= 1
+                nodes.append({
+                    "id": pid,
+                    "name": partner_name,
+                    "type": "other",
+                    "employees": 50,
+                    "segment": None,
+                    "in_db": False,
+                })
+                company_index[partner_name.lower()] = pid
+
+            link_key = (min(c.id, pid), max(c.id, pid), p.get("type_of_partnership", "Other"))
+            if link_key not in seen_links:
+                seen_links.add(link_key)
                 links.append({
                     "source": c.id,
                     "target": pid,
@@ -126,6 +161,13 @@ def companies_network(db: Session = Depends(get_db)):
                     "scale": p.get("scale"),
                     "date": p.get("date"),
                 })
+
+    # Only return nodes that appear in at least one link
+    connected_ids = set()
+    for link in links:
+        connected_ids.add(link["source"])
+        connected_ids.add(link["target"])
+    nodes = [n for n in nodes if n["id"] in connected_ids]
 
     return {"nodes": nodes, "links": links}
 
@@ -187,6 +229,10 @@ class BulkResearchRequest(BaseModel):
     company_names: list[str]
 
 
+class CompanyChatRequest(BaseModel):
+    message: str
+
+
 @router.post("/research")
 async def research_company_endpoint(req: ResearchRequest, db: Session = Depends(get_db)):
     now = datetime.now(timezone.utc).isoformat()
@@ -242,6 +288,18 @@ async def research_company_endpoint(req: ResearchRequest, db: Session = Depends(
                 inner_db.add(existing)
             inner_db.commit()
             inner_db.refresh(existing)
+
+            # Geocode if lat/lng missing but city is known
+            if not existing.company_hq_lat and existing.company_hq_city:
+                from backend.seed import _geocode_city
+                lat, lng = _geocode_city(
+                    existing.company_hq_city or "",
+                    existing.company_hq_state or "",
+                )
+                if lat:
+                    existing.company_hq_lat = lat
+                    existing.company_hq_lng = lng
+                    inner_db.commit()
 
             for article in news:
                 article["company_id"] = existing.id
@@ -321,7 +379,8 @@ async def custom_search(req: CustomSearchRequest, db: Session = Depends(get_db))
                 ),
                 messages=[{"role": "user", "content": f"Query: {req.query}\n\nSearch results:\n{raw}"}],
             )
-            summary = msg.content[0].text
+            from backend.ai_research import _strip_emojis
+            summary = _strip_emojis(msg.content[0].text)
 
             j = inner_db.query(ResearchJob).filter(ResearchJob.id == job_id).first()
             if j:
@@ -399,28 +458,88 @@ async def discover_companies_endpoint(req: DiscoverRequest, db: Session = Depend
     return {"job_id": job_id}
 
 
+@router.post("/{company_id}/chat")
+async def chat_with_company(company_id: int, req: CompanyChatRequest, db: Session = Depends(get_db)):
+    """Answer a specific question about a company using its stored data + live web search."""
+    c = db.query(Company).filter(Company.id == company_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Company not found")
+
+    from backend.ai_research import perplexity_search, _get_anthropic
+    from backend.config import CLAUDE_MODEL
+
+    company_context = f"""Company: {c.company_name}
+Type: {c.company_type or 'N/A'} | Status: {c.company_status or 'N/A'}
+HQ: {', '.join(filter(None, [c.company_hq_city, c.company_hq_state, c.company_hq_country]))}
+Segment: {c.supply_chain_segment or 'N/A'}
+Employees: {c.number_of_employees or 'N/A'}
+Keywords: {', '.join(json.loads(c.keywords or '[]'))}
+Summary: {c.summary or 'N/A'}
+Partners: {', '.join(p.get('partner_name','') for p in json.loads(c.announced_partners or '[]'))}"""
+
+    search_query = f"{c.company_name} battery {req.message}"
+    try:
+        web_results = await asyncio.get_event_loop().run_in_executor(
+            None, perplexity_search, search_query
+        )
+    except Exception:
+        web_results = ""
+
+    client = _get_anthropic()
+    msg = client.messages.create(
+        model=CLAUDE_MODEL,
+        max_tokens=1024,
+        system=(
+            "You are a battery industry analyst assistant for BMW. "
+            "You have access to stored company data and fresh web search results. "
+            "Answer the user's question concisely and accurately. "
+            "If the web results contain relevant information, incorporate it. "
+            "Use markdown for structure when helpful."
+        ),
+        messages=[{
+            "role": "user",
+            "content": (
+                f"Stored company data:\n{company_context}\n\n"
+                f"Fresh web search results for '{search_query}':\n{web_results}\n\n"
+                f"User question: {req.message}"
+            ),
+        }],
+    )
+    return {"response": msg.content[0].text}
+
+
 @router.post("/bulk-research")
 async def bulk_research(req: BulkResearchRequest, db: Session = Depends(get_db)):
     """Add stubs for unknown companies then queue a research job for each."""
     now = datetime.now(timezone.utc).isoformat()
-    job_ids = []
+    names = req.company_names[:10]
 
-    for name in req.company_names[:10]:
-        existing = db.query(Company).filter(Company.company_name.ilike(name)).first()
-        if not existing:
+    # Load existing names once, add missing stubs in a single commit
+    existing_names = {
+        c.company_name.lower()
+        for c in db.query(Company.company_name).all()
+    }
+    for name in names:
+        if name.lower() not in existing_names:
             db.add(Company(company_name=name, data_source="ai_research", last_updated=now))
-            db.commit()
+    db.flush()
 
+    # Create all jobs in a single commit
+    jobs = []
+    for name in names:
         job = ResearchJob(
             job_type="company_research", status="pending",
             target=name, created_at=now, updated_at=now,
         )
         db.add(job)
-        db.commit()
+        jobs.append(job)
+    db.commit()
+    for job in jobs:
         db.refresh(job)
-        job_ids.append(job.id)
+    job_ids = [job.id for job in jobs]
 
-        async def _run(company_name=name, job_id=job.id):
+    for job in jobs:
+        async def _run(company_name=job.target, job_id=job.id):
             from backend.ai_research import research_company, search_company_news
             from backend.database import SessionLocal
 
@@ -444,6 +563,18 @@ async def bulk_research(req: BulkResearchRequest, db: Session = Depends(get_db))
                     company.last_updated = ts
                     company.data_source = "ai_research"
                     inner_db.commit()
+
+                    # Geocode if lat/lng missing but city is known
+                    if not company.company_hq_lat and company.company_hq_city:
+                        from backend.seed import _geocode_city
+                        lat, lng = _geocode_city(
+                            company.company_hq_city or "",
+                            company.company_hq_state or "",
+                        )
+                        if lat:
+                            company.company_hq_lat = lat
+                            company.company_hq_lng = lng
+                            inner_db.commit()
 
                     for article in news:
                         article["company_id"] = company.id

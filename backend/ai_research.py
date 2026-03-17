@@ -1,25 +1,22 @@
-"""AI Research module: Gemini search + Claude synthesis."""
+"""AI Research module: Claude web search + Claude synthesis."""
 from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 
 import anthropic
-from google import genai
-from google.genai import types
 
 from backend.config import (
     ANTHROPIC_API_KEY,
     CLAUDE_MODEL,
-    GEMINI_API_KEY,
-    GEMINI_MODEL,
+    TAVILY_API_KEY,
 )
 
 log = logging.getLogger(__name__)
 
 _anthropic_client = None
-_gemini_client = None
 
 
 def _get_anthropic():
@@ -29,76 +26,76 @@ def _get_anthropic():
     return _anthropic_client
 
 
-def _get_gemini():
-    global _gemini_client
-    if _gemini_client is None:
-        _gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-    return _gemini_client
-
-
 def perplexity_search(query: str, max_retries: int = 3) -> str:
-    """Search the web using Gemini with Google Search grounding. Retries on 429."""
-    if not GEMINI_API_KEY:
-        return f"[Gemini not configured] Query was: {query}"
+    """Search the web using Tavily (preferred) or Claude web search (fallback)."""
+    if TAVILY_API_KEY:
+        return _tavily_search(query, max_retries)
+    return _claude_web_search(query, max_retries)
 
-    client = _get_gemini()
+
+def _tavily_search(query: str, max_retries: int = 3) -> str:
+    """Search via Tavily API — fast, cheap, purpose-built for AI agents."""
+    from tavily import TavilyClient
+    client = TavilyClient(api_key=TAVILY_API_KEY)
 
     for attempt in range(max_retries):
         try:
-            response = client.models.generate_content(
-                model=GEMINI_MODEL,
-                contents=query,
-                config=types.GenerateContentConfig(
-                    tools=[types.Tool(google_search=types.GoogleSearch())],
-                ),
+            response = client.search(
+                query=query,
+                search_depth="advanced",
+                max_results=8,
+                include_answer=True,
             )
+            parts = []
+            if response.get("answer"):
+                parts.append(response["answer"])
+            for r in response.get("results", []):
+                title = r.get("title", "")
+                url = r.get("url", "")
+                content = r.get("content", "")
+                if content:
+                    parts.append(f"[{title}] ({url})\n{content}")
+            result = "\n\n".join(parts).strip()
+            log.debug("Tavily search for %r returned %d chars", query, len(result))
+            return result or f"No results for: {query}"
+        except Exception as e:
+            if attempt < max_retries - 1:
+                time.sleep(5)
+                continue
+            log.error("Tavily search failed: %s", e)
+            return f"Search failed: {query}"
 
-            # Extract text from all candidates/parts
-            text_parts = []
-            try:
-                for candidate in response.candidates:
-                    for part in candidate.content.parts:
-                        if hasattr(part, "text") and part.text:
-                            text_parts.append(part.text)
-            except Exception:
-                pass
 
-            # Append grounding chunk snippets if available
-            try:
-                chunks = response.candidates[0].grounding_metadata.grounding_chunks
-                for chunk in chunks:
-                    if hasattr(chunk, "web") and chunk.web:
-                        snippet = getattr(chunk.web, "snippet", "") or ""
-                        title = getattr(chunk.web, "title", "") or ""
-                        uri = getattr(chunk.web, "uri", "") or ""
-                        if snippet:
-                            text_parts.append(f"[{title}] ({uri}): {snippet}")
-            except Exception:
-                pass
+def _claude_web_search(query: str, max_retries: int = 3) -> str:
+    """Fallback: search via Claude's built-in web search tool."""
+    client = _get_anthropic()
 
+    for attempt in range(max_retries):
+        try:
+            response = client.messages.create(
+                model=CLAUDE_MODEL,
+                max_tokens=4096,
+                tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 5}],
+                messages=[{
+                    "role": "user",
+                    "content": (
+                        f"Search for detailed, factual information about: {query}. "
+                        "Return all relevant facts, figures, partnerships, funding amounts, "
+                        "employee counts, technologies, and recent news you find."
+                    ),
+                }],
+            )
+            text_parts = [b.text for b in response.content if hasattr(b, "text") and b.text]
             result = "\n\n".join(text_parts).strip()
-            if not result:
-                try:
-                    result = response.text or f"No results for: {query}"
-                except Exception:
-                    result = f"No results for: {query}"
-
-            log.debug("Gemini search for %r returned %d chars", query, len(result))
-            return result
-
+            log.debug("Claude web search for %r returned %d chars", query, len(result))
+            return result or f"No results found for: {query}"
         except Exception as e:
             err_str = str(e)
-            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                # Parse suggested retry delay if present
-                wait = 60
-                import re
-                match = re.search(r"retryDelay.*?(\d+)s", err_str)
-                if match:
-                    wait = int(match.group(1)) + 5
-                if attempt < max_retries - 1:
-                    log.warning("Gemini rate limited — waiting %ds before retry %d/%d", wait, attempt + 1, max_retries)
-                    time.sleep(wait)
-                    continue
+            if ("529" in err_str or "overloaded" in err_str.lower() or "rate_limit" in err_str.lower()) and attempt < max_retries - 1:
+                wait = 30 * (attempt + 1)
+                log.warning("Claude web search throttled — waiting %ds (attempt %d/%d)", wait, attempt + 1, max_retries)
+                time.sleep(wait)
+                continue
             raise
 
     return f"Search failed after {max_retries} retries: {query}"
@@ -107,6 +104,7 @@ def perplexity_search(query: str, max_retries: int = 3) -> str:
 COMPANY_SYSTEM_PROMPT = """You are a senior battery industry analyst for BMW's technology scouting team.
 Given web search results about a battery company, extract structured intelligence and return ONLY valid JSON.
 Use null for unknown fields. Be thorough — this data drives investment and partnership decisions.
+Do NOT use emojis anywhere in your output.
 
 For company_type choose from: start-up, cell supplier, materials supplier, EV OEM, testing partner, prototyping partner, recycler, equipment supplier, R&D, services, modeling/software, other.
 
@@ -130,12 +128,15 @@ Return a JSON object with EXACTLY these fields:
   "keywords": [string],
   "announced_partners": [{"partner_name": string, "type_of_partnership": string, "scale": string, "date": string}],
   "number_of_employees": integer or null,
+  "market_cap_usd": number or null (in millions USD, e.g. 1200.0 means $1.2B),
+  "revenue_usd": number or null (in millions USD, annual, most recent),
+  "total_funding_usd": number or null (in millions USD, cumulative VC/PE/grants raised),
   "last_fundraise_date": string or null,
   "company_website": string or null,
   "summary": string
 }"""
 
-NEWS_SYSTEM_PROMPT = """You are a battery industry analyst for BMW.
+NEWS_SYSTEM_PROMPT = """You are a battery industry analyst for BMW. Do NOT use emojis.
 Given web search results, extract up to 10 distinct news articles/events from 2023-2025.
 Return ONLY a JSON array — no other text, no markdown.
 
@@ -196,6 +197,10 @@ Return ONLY valid JSON with this structure:
     "topics": [string]
   }]
 }"""
+
+
+def _strip_emojis(text: str) -> str:
+    return re.sub(r'[\U0001F000-\U0001FFFF\u2600-\u27BF\U0001FA00-\U0001FFFF]', '', text)
 
 
 def _claude_json(system: str, user: str) -> dict | list:

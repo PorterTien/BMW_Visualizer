@@ -10,7 +10,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
-from backend.database import get_db, init_db
+from backend.database import get_db, init_db, migrate_db
 from backend.models import Company, SyncLog
 from backend.routes import companies, jobs, news, proceedings, upload
 from backend.scheduler import get_next_run_time, start_scheduler, stop_scheduler
@@ -38,6 +38,7 @@ app.include_router(jobs.router)
 @app.on_event("startup")
 async def startup():
     init_db()
+    migrate_db()
     start_scheduler()
     # Auto-seed if DB is empty
     from backend.database import SessionLocal
@@ -52,15 +53,19 @@ async def startup():
         db.close()
 
 
-async def _auto_seed():
+async def _run_seed(force: bool):
     from backend.database import SessionLocal
     from backend.seed import import_naatbatt
 
     db = SessionLocal()
     try:
-        await asyncio.get_event_loop().run_in_executor(None, import_naatbatt, db, False)
+        await asyncio.get_event_loop().run_in_executor(None, import_naatbatt, db, force)
     finally:
         db.close()
+
+
+async def _auto_seed():
+    await _run_seed(False)
 
 
 @app.on_event("shutdown")
@@ -88,35 +93,15 @@ def sync_status(db: Session = Depends(get_db)):
 
 
 @app.post("/api/sync/naatbatt")
-def trigger_naatbatt_sync(db: Session = Depends(get_db)):
-    async def _run():
-        from backend.database import SessionLocal
-        from backend.seed import import_naatbatt
-
-        inner_db = SessionLocal()
-        try:
-            await asyncio.get_event_loop().run_in_executor(None, import_naatbatt, inner_db, True)
-        finally:
-            inner_db.close()
-
-    asyncio.create_task(_run())
+def trigger_naatbatt_sync():
+    asyncio.create_task(_run_seed(True))
     return {"status": "sync_started"}
 
 
 # Seed endpoints
 @app.post("/api/seed")
 def trigger_seed():
-    async def _run():
-        from backend.database import SessionLocal
-        from backend.seed import import_naatbatt
-
-        inner_db = SessionLocal()
-        try:
-            await asyncio.get_event_loop().run_in_executor(None, import_naatbatt, inner_db, False)
-        finally:
-            inner_db.close()
-
-    asyncio.create_task(_run())
+    asyncio.create_task(_run_seed(False))
     return {"status": "seed_started"}
 
 

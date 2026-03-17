@@ -7,7 +7,7 @@ pdfplumber
 python-multipart
 httpx
 anthropic
+tavily-python
 python-dotenv
 apscheduler
 aiofiles
-google-genai

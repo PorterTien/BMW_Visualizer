@@ -78,9 +78,15 @@ export default function Sidebar({ filters, setFilters, collapsed, setCollapsed, 
   const [showSuggestions, setShowSuggestions] = useState(false)
   const searchRef = useRef(null)
 
+  const lowerNamesRef = useRef([])
+
   useEffect(() => {
     getCompanies()
-      .then(({ data }) => setCompanyNames(data.map((c) => c.company_name).filter(Boolean)))
+      .then(({ data }) => {
+        const names = data.map((c) => c.company_name).filter(Boolean)
+        setCompanyNames(names)
+        lowerNamesRef.current = names.map((n) => n.toLowerCase())
+      })
       .catch(() => {})
   }, [])
 
@@ -88,8 +94,9 @@ export default function Sidebar({ filters, setFilters, collapsed, setCollapsed, 
     setFilters((f) => ({ ...f, search: val }))
     if (val.trim().length > 0) {
       const q = val.toLowerCase()
-      const starts = companyNames.filter((n) => n.toLowerCase().startsWith(q))
-      const contains = companyNames.filter((n) => !n.toLowerCase().startsWith(q) && n.toLowerCase().includes(q))
+      const lower = lowerNamesRef.current
+      const starts = companyNames.filter((_, i) => lower[i].startsWith(q))
+      const contains = companyNames.filter((_, i) => !lower[i].startsWith(q) && lower[i].includes(q))
       setSuggestions([...starts, ...contains].slice(0, 16))
       setShowSuggestions(true)
     } else {

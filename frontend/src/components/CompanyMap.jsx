@@ -1,6 +1,11 @@
-import React, { useEffect, useState } from 'react'
-import { MapContainer, TileLayer, CircleMarker, Popup } from 'react-leaflet'
+import React, { useEffect, useState, useMemo } from 'react'
+import { MapContainer, TileLayer, CircleMarker, Popup, useMap } from 'react-leaflet'
 import { getCompaniesMap } from '../api/client'
+
+const LIGHT_TILES = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
+const DARK_TILES = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
+const LIGHT_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+const DARK_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>'
 
 const TYPE_COLORS = {
   'start-up': '#8B5CF6',
@@ -45,7 +50,7 @@ function Legend() {
   )
 }
 
-export default function CompanyMap({ filters, onSelectCompany, highlightName }) {
+export default function CompanyMap({ filters, onSelectCompany, highlightName, darkMode }) {
   const [companies, setCompanies] = useState([])
   const [loading, setLoading] = useState(true)
 
@@ -56,7 +61,7 @@ export default function CompanyMap({ filters, onSelectCompany, highlightName }) 
       .finally(() => setLoading(false))
   }, [])
 
-  const filtered = companies.filter((c) => {
+  const filtered = useMemo(() => companies.filter((c) => {
     if (filters.search) {
       const q = filters.search.toLowerCase()
       if (!c.company_name?.toLowerCase().includes(q)) return false
@@ -66,7 +71,7 @@ export default function CompanyMap({ filters, onSelectCompany, highlightName }) 
     if (filters.segments.length && !filters.segments.includes(c.supply_chain_segment)) return false
     if (filters.countries.length && !filters.countries.some((co) => c.company_hq_country?.includes(co))) return false
     return true
-  })
+  }), [companies, filters])
 
   if (loading) {
     return (
@@ -84,12 +89,13 @@ export default function CompanyMap({ filters, onSelectCompany, highlightName }) 
         style={{ height: '100%', width: '100%' }}
         zoomAnimation={true}
         zoomAnimationThreshold={4}
+        wheelPxPerZoomLevel={120}
         wheelDebounceTime={80}
-        wheelPxPerZoomLevel={200}
       >
         <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          key={darkMode ? 'dark' : 'light'}
+          attribution={darkMode ? DARK_ATTR : LIGHT_ATTR}
+          url={darkMode ? DARK_TILES : LIGHT_TILES}
         />
         {filtered.map((c) => {
           const isHighlighted = highlightName && c.company_name === highlightName

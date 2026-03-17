@@ -4,22 +4,41 @@ import CompanyDetail from './CompanyDetail'
 
 const PAGE_SIZE = 25
 
+function safeHostname(url) {
+  try { return new URL(url).hostname.replace('www.', '') } catch { return url }
+}
+
 const COLS = [
   { key: 'company_name', label: 'Company' },
+  { key: 'supply_chain_segment', label: 'Segment' },
   { key: 'company_type', label: 'Type' },
   { key: 'company_status', label: 'Status' },
-  { key: 'hq', label: 'HQ' },
-  { key: 'supply_chain_segment', label: 'Segment' },
+  { key: 'chemistries', label: 'Chemistries' },
+  { key: 'feedstock', label: 'Feedstock' },
+  { key: 'company_hq_city', label: 'HQ City' },
+  { key: 'company_hq_state', label: 'State/Province' },
+  { key: 'company_hq_country', label: 'Country' },
+  { key: 'hq_company', label: 'Parent Company' },
+  { key: 'company_website', label: 'Website' },
   { key: 'number_of_employees', label: 'Employees' },
+  { key: 'last_fundraise_date', label: 'Last Fundraise' },
   { key: 'naatbatt_member', label: 'NAATBatt' },
+  { key: 'contact_email', label: 'Contact Email' },
+  { key: 'keywords', label: 'Keywords' },
+  { key: 'summary', label: 'Profile' },
 ]
 
 function exportCSV(companies) {
-  const headers = ['Name', 'Type', 'Status', 'HQ City', 'HQ State', 'Segment', 'Employees', 'Website', 'NAATBatt Member']
+  const headers = [
+    'Name', 'Segment', 'Type', 'Status',
+    'HQ City', 'HQ State', 'Country', 'Website',
+    'Employees', 'Last Fundraise', 'NAATBatt Member', 'Keywords', 'Profile',
+  ]
   const rows = companies.map((c) => [
-    c.company_name, c.company_type, c.company_status,
-    c.company_hq_city, c.company_hq_state, c.supply_chain_segment,
-    c.number_of_employees, c.company_website, c.naatbatt_member ? 'Yes' : 'No',
+    c.company_name, c.supply_chain_segment, c.company_type, c.company_status,
+    c.company_hq_city, c.company_hq_state, c.company_hq_country, c.company_website,
+    c.number_of_employees, c.last_fundraise_date, c.naatbatt_member ? 'Yes' : 'No',
+    (c.keywords || []).join('; '), c.summary,
   ])
   const csv = [headers, ...rows].map((r) => r.map((v) => `"${v ?? ''}"`).join(',')).join('\n')
   const blob = new Blob([csv], { type: 'text/csv' })
@@ -27,6 +46,11 @@ function exportCSV(companies) {
   a.href = URL.createObjectURL(blob)
   a.download = 'bmw_battery_companies.csv'
   a.click()
+}
+
+function SortIcon({ col, sortKey, sortDir }) {
+  if (sortKey !== col) return <span className="text-gray-300 ml-1">↕</span>
+  return <span className="ml-1">{sortDir === 1 ? '↑' : '↓'}</span>
 }
 
 export default function CompanyTable({ filters }) {
@@ -80,11 +104,6 @@ export default function CompanyTable({ filters }) {
     setPage(1)
   }
 
-  function SortIcon({ col }) {
-    if (sortKey !== col) return <span className="text-gray-300 ml-1">↕</span>
-    return <span className="ml-1">{sortDir === 1 ? '↑' : '↓'}</span>
-  }
-
   return (
     <div className="flex flex-col flex-1 min-h-0">
       {/* Toolbar */}
@@ -99,7 +118,7 @@ export default function CompanyTable({ filters }) {
         <span className="text-sm text-gray-500">{filtered.length} results</span>
         <button
           onClick={() => exportCSV(filtered)}
-          className="bg-[#4599FE] hover:bg-[#4599FE] text-white text-sm px-4 py-2 rounded"
+          className="bg-[#4599FE] hover:bg-[#3a88ee] text-white text-sm px-4 py-2 rounded"
         >
           Export CSV
         </button>
@@ -120,7 +139,7 @@ export default function CompanyTable({ filters }) {
                     className="text-left px-4 py-3 font-semibold text-gray-600 cursor-pointer hover:text-gray-900 border-b border-[#B8CAD1] whitespace-nowrap"
                   >
                     {col.label}
-                    <SortIcon col={col.key} />
+                    <SortIcon col={col.key} sortKey={sortKey} sortDir={sortDir} />
                   </th>
                 ))}
               </tr>
@@ -134,24 +153,64 @@ export default function CompanyTable({ filters }) {
                     i % 2 === 0 ? 'bg-white' : 'bg-[#F0F4F8]/50'
                   }`}
                 >
-                  <td className="px-4 py-3 font-medium text-[#4599FE]">{c.company_name}</td>
-                  <td className="px-4 py-3 text-gray-600 capitalize">{c.company_type || '—'}</td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 font-medium text-[#4599FE] whitespace-nowrap">{c.company_name}</td>
+                  <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{c.supply_chain_segment || '—'}</td>
+                  <td className="px-4 py-3 text-gray-600 capitalize whitespace-nowrap">{c.company_type || '—'}</td>
+                  <td className="px-4 py-3 whitespace-nowrap">
                     <StatusBadge status={c.company_status} />
                   </td>
-                  <td className="px-4 py-3 text-gray-600">
-                    {[c.company_hq_city, c.company_hq_state].filter(Boolean).join(', ') || '—'}
+                  <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{c.chemistries || '—'}</td>
+                  <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{c.feedstock || '—'}</td>
+                  <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{c.company_hq_city || '—'}</td>
+                  <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{c.company_hq_state || '—'}</td>
+                  <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{c.company_hq_country || '—'}</td>
+                  <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{c.hq_company || '—'}</td>
+                  <td className="px-4 py-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                    {c.company_website ? (
+                      <a
+                        href={c.company_website}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[#4599FE] hover:underline text-xs"
+                      >
+                        {safeHostname(c.company_website)}
+                      </a>
+                    ) : <span className="text-gray-400">—</span>}
                   </td>
-                  <td className="px-4 py-3 text-gray-600">{c.supply_chain_segment || '—'}</td>
-                  <td className="px-4 py-3 text-gray-600">
+                  <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
                     {c.number_of_employees?.toLocaleString() || '—'}
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{c.last_fundraise_date || '—'}</td>
+                  <td className="px-4 py-3 whitespace-nowrap">
                     {c.naatbatt_member ? (
                       <span className="bg-green-100 text-green-700 text-xs px-2 py-0.5 rounded-full">Yes</span>
                     ) : (
                       <span className="text-gray-400 text-xs">No</span>
                     )}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                    {c.contact_email ? (
+                      <a href={`mailto:${c.contact_email}`} className="text-[#4599FE] hover:underline text-xs" onClick={e => e.stopPropagation()}>
+                        {c.contact_email}
+                      </a>
+                    ) : <span className="text-gray-400">—</span>}
+                  </td>
+                  <td className="px-4 py-3 max-w-[180px]">
+                    {c.keywords?.length > 0 ? (
+                      <div className="flex flex-wrap gap-1">
+                        {c.keywords.slice(0, 3).map((k) => (
+                          <span key={k} className="bg-[#E8F1FF] text-[#4599FE] text-xs px-1.5 py-0.5 rounded-full whitespace-nowrap">{k}</span>
+                        ))}
+                        {c.keywords.length > 3 && (
+                          <span className="text-gray-400 text-xs">+{c.keywords.length - 3}</span>
+                        )}
+                      </div>
+                    ) : <span className="text-gray-400">—</span>}
+                  </td>
+                  <td className="px-4 py-3 text-gray-500 text-xs max-w-[260px]">
+                    {c.summary ? (
+                      <span title={c.summary} className="line-clamp-2">{c.summary}</span>
+                    ) : <span className="text-gray-400">—</span>}
                   </td>
                 </tr>
               ))}

@@ -20,7 +20,7 @@ import pandas as pd
 # Allow running as a script from repo root
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from backend.config import NAATBATT_LOCAL_PATH, NAATBATT_URL, VALID_COUNTRIES, VALID_SHEETS
+from backend.config import NAATBATT_LOCAL_PATH, NAATBATT_URL, VALID_COUNTRIES
 from backend.database import SessionLocal, init_db
 from backend.models import Company, SyncLog
 
@@ -38,6 +38,8 @@ SEGMENT_TO_TYPE = {
     "R&D": "R&D",
     "Services & Consulting": "services",
     "Modeling & Software": "modeling/software",
+    "Distributors": "services",
+    "Professional Services (NB)": "services",
 }
 
 
@@ -110,6 +112,7 @@ def parse_xlsx() -> dict[str, dict]:
     """
     Returns a dict keyed by normalized company name.
     Each value contains the merged company record + locations list.
+    Auto-detects all sheets with a 'Company' column.
     """
     path = NAATBATT_LOCAL_PATH
     xl = pd.ExcelFile(path)
@@ -119,27 +122,31 @@ def parse_xlsx() -> dict[str, dict]:
     # normalized_name -> {fields..., locations: [...]}
     companies: dict[str, dict] = {}
 
-    for sheet in VALID_SHEETS:
-        if sheet not in available:
-            log.warning("Sheet %r not found — skipping.", sheet)
+    for sheet in available:
+        df = xl.parse(sheet, dtype=str)
+        # Normalize column names: strip whitespace + collapse double spaces
+        df.columns = [" ".join(str(c).split()) for c in df.columns]
+
+        # Only parse sheets that have a "Company" column
+        if "Company" not in df.columns:
+            log.debug("Sheet %r: no 'Company' column — skipping.", sheet)
             continue
 
-        df = xl.parse(sheet, dtype=str)
-        df.columns = [str(c).strip() for c in df.columns]
         log.info("Sheet %r: %d rows", sheet, len(df))
 
         for _, row in df.iterrows():
             country = _safe_str(row.get("Facility Country", "")) or ""
             hq_country = _safe_str(row.get("HQ Country", "")) or ""
-            # Accept row if facility OR HQ country is blank or matches valid countries
-            country_ok = (
-                not country
-                or country.upper() in {c.upper() for c in VALID_COUNTRIES}
-                or not hq_country
-                or hq_country.upper() in {c.upper() for c in VALID_COUNTRIES}
-            )
-            if not country_ok:
-                continue
+            # If VALID_COUNTRIES is non-empty, filter; otherwise accept all
+            if VALID_COUNTRIES:
+                country_ok = (
+                    not country
+                    or country.upper() in {c.upper() for c in VALID_COUNTRIES}
+                    or not hq_country
+                    or hq_country.upper() in {c.upper() for c in VALID_COUNTRIES}
+                )
+                if not country_ok:
+                    continue
 
             raw_name = _safe_str(row.get("Company", ""))
             if not raw_name:
@@ -148,20 +155,45 @@ def parse_xlsx() -> dict[str, dict]:
 
             lat = _safe_float(row.get("Latitude"))
             lng = _safe_float(row.get("Longitude"))
+            # Support column naming variations across sheets
+            capacity = _safe_str(
+                row.get("Capacity") or row.get("Production Capacity")
+            )
+            capacity_units = _safe_str(
+                row.get("Capacity Units") or row.get("Production Units")
+            )
+            # Use segment from data column when available; fall back to sheet name
+            segment = _safe_str(row.get("Supply Chain Segment")) or sheet
+            company_type = SEGMENT_TO_TYPE.get(segment, "other")
+
             location = {
                 "facility_name": _safe_str(row.get("Facility Name")),
+                "address": _safe_str(row.get("Facility Address")),
                 "city": _safe_str(row.get("Facility City")),
                 "state": _safe_str(row.get("Facility State or Province")),
                 "country": country,
+                "zip": _safe_str(row.get("Facility Zip")),
+                "phone": _safe_str(row.get("Facility Phone")),
                 "lat": lat,
                 "lng": lng,
                 "product": _safe_str(row.get("Product")),
                 "product_type": _safe_str(row.get("Product/Facility Type")),
+                "chemistries": _safe_str(row.get("Chemistries")),
+                "feedstock": _safe_str(row.get("Feedstock")),
                 "status": _safe_str(row.get("Status")),
                 "workforce": _safe_str(row.get("Facility Workforce")),
-                "production_capacity": _safe_str(row.get("Production Capacity")),
-                "production_units": _safe_str(row.get("Production Units")),
+                "capacity": capacity,
+                "capacity_units": capacity_units,
             }
+
+            # Handle column-name variations for contact email
+            contact_email = _safe_str(
+                row.get("Contact Email") or row.get("Contact email")
+            )
+            # Handle long description variations
+            long_desc = _safe_str(
+                row.get("Long Description") or row.get("Long description3")
+            )
 
             if key not in companies:
                 companies[key] = {
@@ -172,14 +204,22 @@ def parse_xlsx() -> dict[str, dict]:
                     "company_hq_lat": lat,
                     "company_hq_lng": lng,
                     "company_website": _safe_str(row.get("Company Website")),
-                    "supply_chain_segment": sheet,
-                    "company_type": SEGMENT_TO_TYPE.get(sheet, "other"),
+                    "hq_company": _safe_str(row.get("HQ Company")),
+                    "hq_company_website": _safe_str(row.get("HQ Company Website")),
+                    "supply_chain_segment": segment,
+                    "company_type": company_type,
                     "company_status": _safe_str(row.get("Status")),
                     "summary": _safe_str(row.get("Brief Company Profile")),
-                    "long_description": _safe_str(row.get("Long Description")),
+                    "long_description": long_desc,
+                    "chemistries": _safe_str(row.get("Chemistries")),
+                    "feedstock": _safe_str(row.get("Feedstock")),
+                    "notes": _safe_str(row.get("Notes")),
+                    "contact_name": _safe_str(row.get("Contact")),
+                    "contact_email": contact_email,
+                    "contact_phone": _safe_str(row.get("Contact Phone")),
                     "naatbatt_member": 1 if _safe_str(row.get("NAATBatt Member", "")) == "Yes" else 0,
                     "naatbatt_id": _safe_str(row.get("ID")),
-                    "company_focus": json.dumps([sheet]),
+                    "company_focus": json.dumps([segment]),
                     "data_source": "naatbatt_xlsx",
                     "locations": [location],
                 }
@@ -188,10 +228,10 @@ def parse_xlsx() -> dict[str, dict]:
                 existing = companies[key]
                 existing["locations"].append(location)
                 focus = json.loads(existing["company_focus"])
-                if sheet not in focus:
-                    focus.append(sheet)
+                if segment not in focus:
+                    focus.append(segment)
                 existing["company_focus"] = json.dumps(focus)
-                # Fill in HQ if missing
+                # Fill in missing fields from subsequent rows
                 if not existing["company_hq_lat"] and lat:
                     existing["company_hq_lat"] = lat
                     existing["company_hq_lng"] = lng
@@ -201,7 +241,20 @@ def parse_xlsx() -> dict[str, dict]:
                 if not existing["summary"]:
                     existing["summary"] = _safe_str(row.get("Brief Company Profile"))
                 if not existing["long_description"]:
-                    existing["long_description"] = _safe_str(row.get("Long Description"))
+                    existing["long_description"] = long_desc
+                if not existing["chemistries"]:
+                    existing["chemistries"] = _safe_str(row.get("Chemistries"))
+                if not existing["feedstock"]:
+                    existing["feedstock"] = _safe_str(row.get("Feedstock"))
+                if not existing["notes"]:
+                    existing["notes"] = _safe_str(row.get("Notes"))
+                if not existing["contact_name"]:
+                    existing["contact_name"] = _safe_str(row.get("Contact"))
+                    existing["contact_email"] = contact_email
+                    existing["contact_phone"] = _safe_str(row.get("Contact Phone"))
+                if not existing["hq_company"]:
+                    existing["hq_company"] = _safe_str(row.get("HQ Company"))
+                    existing["hq_company_website"] = _safe_str(row.get("HQ Company Website"))
 
     # Geocode companies missing lat/lng
     geocoded = 0
@@ -261,8 +314,10 @@ def import_naatbatt(db, force_download: bool = False) -> dict:
             for field in [
                 "company_hq_city", "company_hq_state", "company_hq_country",
                 "company_hq_lat", "company_hq_lng", "company_locations",
-                "company_website", "supply_chain_segment", "company_type",
-                "company_status", "summary", "long_description",
+                "company_website", "hq_company", "hq_company_website",
+                "supply_chain_segment", "company_type", "company_status",
+                "summary", "long_description", "chemistries", "feedstock",
+                "notes", "contact_name", "contact_email", "contact_phone",
                 "naatbatt_member", "naatbatt_id", "company_focus",
                 "last_updated",
             ]:

@@ -13,3 +13,136 @@ body {
 .leaflet-container {
   z-index: 0;
 }
+
+/* ═══════════════════════════════════════
+   Dark mode overrides
+   Toggle by adding class="dark" on <html>
+   ═══════════════════════════════════════ */
+
+html.dark body {
+  background-color: #0D1B2E;
+  color: #CBD5E1;
+}
+
+/* ── Backgrounds ── */
+html.dark .bg-white {
+  background-color: #0F2236;
+}
+html.dark .bg-\[\#F0F4F8\] {
+  background-color: #091827;
+}
+html.dark .bg-\[\#F0F4F8\]\/50 {
+  background-color: rgba(9, 24, 39, 0.5);
+}
+html.dark .bg-\[\#E8F1FF\] {
+  background-color: #1A3A5C;
+}
+html.dark .bg-blue-50 {
+  background-color: #0F2236;
+}
+html.dark .bg-blue-100 {
+  background-color: rgba(69, 153, 254, 0.15);
+}
+
+/* Status / category badges */
+html.dark .bg-green-100 { background-color: rgba(16, 185, 129, 0.15); }
+html.dark .bg-yellow-100 { background-color: rgba(245, 158, 11, 0.15); }
+html.dark .bg-orange-100 { background-color: rgba(249, 115, 22, 0.15); }
+html.dark .bg-purple-100 { background-color: rgba(139, 92, 246, 0.15); }
+html.dark .bg-red-100 { background-color: rgba(239, 68, 68, 0.15); }
+html.dark .bg-gray-100 { background-color: rgba(148, 163, 184, 0.15); }
+html.dark .bg-emerald-100 { background-color: rgba(16, 185, 129, 0.15); }
+html.dark .bg-sky-100 { background-color: rgba(14, 165, 233, 0.15); }
+html.dark .bg-indigo-100 { background-color: rgba(99, 102, 241, 0.15); }
+html.dark .bg-teal-100 { background-color: rgba(20, 184, 166, 0.15); }
+
+/* Badge text */
+html.dark .text-green-700,
+html.dark .text-green-800 { color: #6EE7B7; }
+html.dark .text-blue-700,
+html.dark .text-blue-800 { color: #93C5FD; }
+html.dark .text-yellow-700 { color: #FCD34D; }
+html.dark .text-orange-700,
+html.dark .text-orange-800 { color: #FDBA74; }
+html.dark .text-purple-700,
+html.dark .text-purple-800 { color: #C4B5FD; }
+html.dark .text-red-700,
+html.dark .text-red-800 { color: #FCA5A5; }
+html.dark .text-emerald-800 { color: #6EE7B7; }
+html.dark .text-sky-800 { color: #7DD3FC; }
+html.dark .text-indigo-800 { color: #A5B4FC; }
+html.dark .text-teal-800 { color: #5EEAD4; }
+
+/* ── Text ── */
+html.dark .text-\[\#031E49\] {
+  color: #E2E8F0;
+}
+html.dark .text-gray-900 { color: #F1F5F9; }
+html.dark .text-gray-800 { color: #E2E8F0; }
+html.dark .text-gray-700 { color: #CBD5E1; }
+html.dark .text-gray-600 { color: #94A3B8; }
+
+/* ── Borders ── */
+html.dark .border-\[\#B8CAD1\] {
+  border-color: #1A3A5C;
+}
+html.dark .border-blue-200 {
+  border-color: #1A3A5C;
+}
+html.dark .divide-\[\#F0F4F8\] > :not([hidden]) ~ :not([hidden]) {
+  border-color: #1A3A5C;
+}
+
+/* ── Hover states ── */
+html.dark .hover\:bg-\[\#F0F4F8\]:hover {
+  background-color: #162A42;
+}
+html.dark .hover\:bg-\[\#E8F1FF\]:hover {
+  background-color: #1A3A5C;
+}
+html.dark .hover\:bg-blue-50:hover {
+  background-color: #162A42;
+}
+html.dark .hover\:text-gray-800:hover {
+  color: #E2E8F0;
+}
+html.dark .hover\:text-gray-900:hover {
+  color: #F1F5F9;
+}
+
+/* ── Inputs ── */
+html.dark input:not([type="checkbox"]):not([type="radio"]),
+html.dark textarea,
+html.dark select {
+  background-color: #0F2236;
+  color: #E2E8F0;
+  border-color: #1A3A5C;
+}
+html.dark input::placeholder,
+html.dark textarea::placeholder {
+  color: #64748B;
+}
+
+/* ── Modal backdrops ── */
+html.dark .bg-black\/40 {
+  background-color: rgba(0, 0, 0, 0.6);
+}
+html.dark .bg-black\/50 {
+  background-color: rgba(0, 0, 0, 0.7);
+}
+
+/* ── Scrollbars ── */
+html.dark ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+html.dark ::-webkit-scrollbar-track {
+  background: #0D1B2E;
+}
+html.dark ::-webkit-scrollbar-thumb {
+  background: #1A3A5C;
+  border-radius: 4px;
+}
+html.dark ::-webkit-scrollbar-thumb:hover {
+  background: #2A4A6C;
+}

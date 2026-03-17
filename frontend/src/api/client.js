@@ -8,6 +8,8 @@ export const getCompaniesMap = () => api.get('/companies/map')
 export const getCompaniesNetwork = () => api.get('/companies/network')
 export const researchCompany = (company_name) =>
   api.post('/companies/research', { company_name })
+export const chatWithCompany = (company_id, message) =>
+  api.post(`/companies/${company_id}/chat`, { message })
 export const customSearch = (query) =>
   api.post('/companies/search/custom', { query })
 export const discoverCompanies = (segment, count = 10, custom_query = '') =>
@@ -29,6 +31,11 @@ export const uploadDocument = (file) => {
   const form = new FormData()
   form.append('file', file)
   return api.post('/upload/document', form)
+}
+export const uploadPartnerships = (file) => {
+  const form = new FormData()
+  form.append('file', file)
+  return api.post('/upload/partnerships', form)
 }
 
 export const getJob = (id) => api.get(`/jobs/${id}`)
