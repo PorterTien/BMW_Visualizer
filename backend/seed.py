@@ -421,8 +421,9 @@ def import_naatbatt(db, force_download: bool = False) -> dict:
     return {"status": "success", "rows_added": added, "rows_updated": updated}
 
 
-BBD_LOCAL_PATH = "data/bbd_data.xlsx"
-GIGAFACTORY_LOCAL_PATH = "data/gigafactory_db.xlsx"
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+BBD_LOCAL_PATH = str(_PROJECT_ROOT / "data" / "bbd_data.xlsx")
+GIGAFACTORY_LOCAL_PATH = str(_PROJECT_ROOT / "data" / "gigafactory_db.xlsx")
 
 SUPPLY_CHAIN_COLS = [
     "Raw Materials", "Battery Grade Materials",
