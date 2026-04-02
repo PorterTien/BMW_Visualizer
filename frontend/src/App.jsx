@@ -79,7 +79,7 @@ export default function App() {
       {seedBanner && (
         <div className="bg-[#4599FE] text-white text-sm text-center py-2 px-4 flex items-center justify-center gap-3">
           <span className="animate-spin"></span>
-          Importing NAATBatt battery company database — this may take a few minutes on first run…
+          Importing battery company database — this may take a few minutes on first run…
         </div>
       )}
 
