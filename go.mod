@@ -1,3 +1,3 @@
 module github.com/PorterTien/BMW_Visualizer
 
-go 1.26.1
+go 1.26.0
