@@ -64,11 +64,13 @@ async def startup():
 
 async def _run_seed(force: bool):
     from backend.database import SessionLocal
-    from backend.seed import import_naatbatt
+    from backend.seed import import_bbd, import_gigafactory, import_naatbatt
 
     db = SessionLocal()
     try:
         await asyncio.get_event_loop().run_in_executor(None, import_naatbatt, db, force)
+        await asyncio.get_event_loop().run_in_executor(None, import_bbd, db)
+        await asyncio.get_event_loop().run_in_executor(None, import_gigafactory, db)
     finally:
         db.close()
 

@@ -421,6 +421,193 @@ def import_naatbatt(db, force_download: bool = False) -> dict:
     return {"status": "success", "rows_added": added, "rows_updated": updated}
 
 
+BBD_LOCAL_PATH = "data/bbd_data.xlsx"
+GIGAFACTORY_LOCAL_PATH = "data/gigafactory_db.xlsx"
+
+SUPPLY_CHAIN_COLS = [
+    "Raw Materials", "Battery Grade Materials",
+    "Other Battery Components & Materials",
+    "Electrode & Cell Manufacturing", "Module & Pack Manufacturing",
+    "End-of-life Recycling", "Equipment Manufacturing", "R&D",
+    "Modeling & Software", "Legal & Financial Services",
+    "Technical Consulting Services", "Education", "Government",
+    "Vehicle OEM", "Consumer Electronics",
+]
+
+CHEMISTRY_COLS = [
+    "Lithium Cobalt Oxide (LCO)", "Lithium Iron Phosphate (LFP)",
+    "Lithium Iron Manganese Phosphate (LMFP)",
+    "Nickel Manganese Cobalt Oxide (NMC)", "Nickel Cobalt Aluminum Oxide",
+    "Lithium Manganese Oxide (LMO)", "Lithium Sulfur", "Silicon Anode",
+    "Synthetic Graphite", "Mined Graphite", "Anode Free",
+    "Solid Electrolyte", "Solid State Battery", "Lead Acid",
+    "Nickel Cadmium", "Nickel Metal Hydride", "Sodium Ion",
+]
+
+
+def import_bbd(db) -> dict:
+    """Import BBD (Volta Foundation) battery company data from bbd_data.xlsx."""
+    path = Path(BBD_LOCAL_PATH)
+    if not path.exists():
+        log.warning("BBD file not found at %s — skipping.", path)
+        return {"status": "skipped", "rows_added": 0, "rows_updated": 0}
+
+    log.info("Importing BBD data from %s …", path)
+    df = pd.read_excel(path, sheet_name="Data", dtype=str)
+    now = datetime.now(timezone.utc).isoformat()
+    added = updated = 0
+
+    for _, row in df.iterrows():
+        name = _safe_str(row.get("company_name"))
+        if not name:
+            continue
+
+        sc_flags = {col: _safe_str(row.get(col)) == "True" for col in SUPPLY_CHAIN_COLS}
+        chem_flags = {col: _safe_str(row.get(col)) == "True" for col in CHEMISTRY_COLS}
+
+        data = {
+            "company_name": name,
+            "company_website": _safe_str(row.get("company_website")),
+            "crunchbase_url": _safe_str(row.get("crunchbase_url")),
+            "linkedin_url": _safe_str(row.get("linkedIn_url")),
+            "pitchbook_url": _safe_str(row.get("pitchbook_url")),
+            "summary": _safe_str(row.get("company_description")),
+            "volta_member": 1 if _safe_str(row.get("volta_foundation_member")) == "True" else 0,
+            "volta_verified": 1 if _safe_str(row.get("volta_verified")) == "True" else 0,
+            "funding_status": _safe_str(row.get("funding_status")),
+            "employee_size": _safe_str(row.get("employee_size")),
+            "company_hq_city": _safe_str(row.get("city")),
+            "company_hq_state": _safe_str(row.get("state")),
+            "company_hq_country": _safe_str(row.get("country")),
+            "products": _safe_str(row.get("products")),
+            "product_services_desc": _safe_str(row.get("product_services_description")),
+            "supply_chain_segment": _safe_str(row.get("supply_chain_segment")),
+            "chemistries": _safe_str(row.get("battery_chemistry")),
+            "supply_chain_flags": json.dumps(sc_flags),
+            "battery_chemistry_flags": json.dumps(chem_flags),
+            "data_source": "bbd_xlsx",
+            "last_updated": now,
+        }
+
+        existing = (
+            db.query(Company)
+            .filter(Company.company_name.ilike(name))
+            .first()
+        )
+        if existing:
+            # Fill BBD-specific fields without overwriting NAATBatt data
+            for field in [
+                "company_website", "crunchbase_url", "linkedin_url", "pitchbook_url",
+                "summary", "funding_status", "employee_size",
+                "company_hq_city", "company_hq_state", "company_hq_country",
+                "products", "product_services_desc", "supply_chain_segment", "chemistries",
+            ]:
+                if not getattr(existing, field, None) and data.get(field):
+                    setattr(existing, field, data[field])
+            # Always set BBD-only fields
+            existing.volta_member = data["volta_member"]
+            existing.volta_verified = data["volta_verified"]
+            existing.supply_chain_flags = data["supply_chain_flags"]
+            existing.battery_chemistry_flags = data["battery_chemistry_flags"]
+            updated += 1
+        else:
+            db.add(Company(**data))
+            added += 1
+
+    db.commit()
+    log.info("BBD import complete: %d added, %d updated", added, updated)
+
+    db.add(SyncLog(
+        source="bbd_xlsx", status="success",
+        rows_added=added, rows_updated=updated,
+        run_at=now,
+    ))
+    db.commit()
+    return {"status": "success", "rows_added": added, "rows_updated": updated}
+
+
+GWH_YEARS = ["2022", "2023", "2024", "2025", "2026", "2027", "2028", "2029", "2030"]
+GWH_COL_MAP = {"2022": "Current GWh capacity 2022"}  # first year has a different column name
+
+SECTION_HEADERS = {"asia pacific", "europe", "north america"}
+
+
+def import_gigafactory(db) -> dict:
+    """Import gigafactory battery cell plant data from gigafactory_db.xlsx."""
+    path = Path(GIGAFACTORY_LOCAL_PATH)
+    if not path.exists():
+        log.warning("Gigafactory file not found at %s — skipping.", path)
+        return {"status": "skipped", "rows_added": 0, "rows_updated": 0}
+
+    log.info("Importing gigafactory data from %s …", path)
+    df = pd.read_excel(path, sheet_name="Global", dtype=str, header=1)
+    df.columns = [" ".join(str(c).split()) for c in df.columns]
+    now = datetime.now(timezone.utc).isoformat()
+    added = updated = 0
+    # Track companies added in this batch (autoflush=False means queries
+    # won't see unflushed additions)
+    batch_added: dict[str, Company] = {}
+
+    for _, row in df.iterrows():
+        name = _safe_str(row.get("Company"))
+        if not name:
+            continue
+        # Skip section header rows like "Asia Pacific current plants"
+        if any(name.lower().startswith(h) for h in SECTION_HEADERS):
+            continue
+
+        gwh: dict[str, float] = {}
+        for year in GWH_YEARS:
+            col = GWH_COL_MAP.get(year, year)
+            val = _safe_float(row.get(col))
+            if val is not None:
+                gwh[year] = val
+
+        existing = (
+            db.query(Company)
+            .filter(Company.company_name.ilike(name))
+            .first()
+        ) or batch_added.get(name.lower())
+
+        if existing:
+            # Merge GWh — sum across multiple plants for the same company
+            old_gwh = json.loads(existing.gwh_capacity or "{}")
+            for year, val in gwh.items():
+                old_gwh[year] = old_gwh.get(year, 0) + val
+            existing.gwh_capacity = json.dumps(old_gwh)
+            if not existing.plant_start_date:
+                existing.plant_start_date = _safe_str(row.get("Start Date"))
+            if not existing.notes:
+                existing.notes = _safe_str(row.get("Notes"))
+            updated += 1
+        else:
+            company = Company(
+                company_name=name,
+                company_hq_city=_safe_str(row.get("City")),
+                company_hq_country=_safe_str(row.get("Country")),
+                gwh_capacity=json.dumps(gwh),
+                plant_start_date=_safe_str(row.get("Start Date")),
+                notes=_safe_str(row.get("Notes")),
+                company_type="Electrode & Cell Manufacturing",
+                data_source="gigafactory_xlsx",
+                last_updated=now,
+            )
+            db.add(company)
+            batch_added[name.lower()] = company
+            added += 1
+
+    db.commit()
+    log.info("Gigafactory import complete: %d added, %d updated", added, updated)
+
+    db.add(SyncLog(
+        source="gigafactory_xlsx", status="success",
+        rows_added=added, rows_updated=updated,
+        run_at=now,
+    ))
+    db.commit()
+    return {"status": "success", "rows_added": added, "rows_updated": updated}
+
+
 if __name__ == "__main__":
     init_db()
     db = SessionLocal()
@@ -429,7 +616,11 @@ if __name__ == "__main__":
         if count == 0:
             log.info("Empty DB — running initial seed import…")
             result = import_naatbatt(db, force_download=False)
-            log.info("Seed result: %s", result)
+            log.info("NAATBatt seed result: %s", result)
+            result = import_bbd(db)
+            log.info("BBD seed result: %s", result)
+            result = import_gigafactory(db)
+            log.info("Gigafactory seed result: %s", result)
         else:
             log.info("DB already has %d companies — skipping seed.", count)
     finally:
