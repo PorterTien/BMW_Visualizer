@@ -1,100 +1,79 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react'
+import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import { getCompaniesNetwork } from '../api/client'
 
+/* ── Colour maps (NAATBatt category names) ── */
+const TYPE_COLORS = {
+  'Raw Materials':                  { border: '#F59E0B', light: '#FDE68A', dark: '#D97706' },
+  'Battery Grade Materials':        { border: '#EAB308', light: '#FEF08A', dark: '#CA8A04' },
+  'Other Battery Components & Mat.':{ border: '#D97706', light: '#FCD34D', dark: '#B45309' },
+  'Electrode & Cell Manufacturing': { border: '#4599FE', light: '#93C5FD', dark: '#2563EB' },
+  'Module-Pack Manufacturing':      { border: '#2563EB', light: '#93C5FD', dark: '#1D4ED8' },
+  'Recycling-Repurposing':          { border: '#10B981', light: '#6EE7B7', dark: '#059669' },
+  'Equipment':                      { border: '#06B6D4', light: '#67E8F9', dark: '#0891B2' },
+  'R&D':                            { border: '#8B5CF6', light: '#C4B5FD', dark: '#7C3AED' },
+  'Services & Consulting':          { border: '#84CC16', light: '#BEF264', dark: '#65A30D' },
+  'Modeling & Software':            { border: '#A855F7', light: '#D8B4FE', dark: '#9333EA' },
+  'Distributors':                   { border: '#F97316', light: '#FDBA74', dark: '#EA580C' },
+  'Professional Services':          { border: '#EC4899', light: '#F9A8D4', dark: '#DB2777' },
+  'other':                          { border: '#9CA3AF', light: '#E5E7EB', dark: '#6B7280' },
+}
+
 const LINK_COLORS = {
-  'Joint Venture': '#34D399',
-  'Investment': '#60A5FA',
-  'MOU': '#FBBF24',
-  'Off-take': '#A78BFA',
+  'Joint Venture':    '#34D399',
+  'Investment':       '#60A5FA',
+  'MOU':              '#FBBF24',
+  'Off-take':         '#A78BFA',
   'Supply Agreement': '#F472B6',
-  'Other': '#64748B',
+  'Other':            '#94A3B8',
 }
 
-const NODE_COLORS = {
-  'start-up': '#A78BFA',
-  'cell supplier': '#38BDF8',
-  'materials supplier': '#FBBF24',
-  'EV OEM': '#34D399',
-  'testing partner': '#F472B6',
-  'prototyping partner': '#FB923C',
-  'recycler': '#94A3B8',
-  'equipment supplier': '#22D3EE',
-  'R&D': '#818CF8',
-  'services': '#86EFAC',
-  'modeling/software': '#C084FC',
-  'other': '#64748B',
-}
-
-const NODE_FILL_DARK = {
-  'start-up': '#7C3AED',
-  'cell supplier': '#0EA5E9',
-  'materials supplier': '#D97706',
-  'EV OEM': '#059669',
-  'testing partner': '#DB2777',
-  'prototyping partner': '#EA580C',
-  'recycler': '#64748B',
-  'equipment supplier': '#0891B2',
-  'R&D': '#4F46E5',
-  'services': '#16A34A',
-  'modeling/software': '#9333EA',
-  'other': '#475569',
-}
-
-const NODE_FILL_LIGHT = {
-  'start-up': '#C4B5FD',
-  'cell supplier': '#7DD3FC',
-  'materials supplier': '#FDE68A',
-  'EV OEM': '#6EE7B7',
-  'testing partner': '#F9A8D4',
-  'prototyping partner': '#FDBA74',
-  'recycler': '#CBD5E1',
-  'equipment supplier': '#67E8F9',
-  'R&D': '#A5B4FC',
-  'services': '#86EFAC',
-  'modeling/software': '#D8B4FE',
-  'other': '#CBD5E1',
-}
-
-const SCALE_METRICS = [
-  { key: 'employees', label: 'Employees', format: (v) => `${v?.toLocaleString()} emp.` },
-  { key: 'market_cap_usd', label: 'Market Cap', format: (v) => `$${v >= 1000 ? (v / 1000).toFixed(1) + 'B' : v + 'M'}` },
-  { key: 'revenue_usd', label: 'Revenue', format: (v) => `$${v >= 1000 ? (v / 1000).toFixed(1) + 'B' : v + 'M'}` },
-  { key: 'total_funding_usd', label: 'Total Funding', format: (v) => `$${v >= 1000 ? (v / 1000).toFixed(1) + 'B' : v + 'M'}` },
+const SCALE_OPTIONS = [
+  { key: 'employees',        label: 'Employees' },
+  { key: 'revenue_usd',      label: 'Revenue' },
+  { key: 'market_cap_usd',   label: 'Market Cap' },
+  { key: 'total_funding_usd',label: 'Total Funding' },
 ]
 
-function getNodeRadius(node, metricKey) {
-  if (node.in_db === false) return 5
-  const val = node[metricKey]
-  if (!val) return 7
-  switch (metricKey) {
-    case 'employees':        return Math.max(7, Math.min(36, Math.sqrt(val / 3) + 4))
-    case 'market_cap_usd':   return Math.max(7, Math.min(36, Math.sqrt(val / 50) + 4))
-    case 'revenue_usd':      return Math.max(7, Math.min(36, Math.sqrt(val / 20) + 4))
-    case 'total_funding_usd':return Math.max(7, Math.min(36, Math.sqrt(val / 10) + 4))
-    default:                 return 8
-  }
+/* ── Helpers ── */
+function typeColors(type, isDark) {
+  const c = TYPE_COLORS[type] || TYPE_COLORS.other
+  return { fill: isDark ? c.dark : c.light, border: c.border }
 }
 
+function nodeRadius(node, metric) {
+  if (node.in_db === false) return 5
+  const v = node[metric]
+  if (!v) return 7
+  const scales = { employees: 3, revenue_usd: 20, market_cap_usd: 50, total_funding_usd: 10 }
+  return Math.max(7, Math.min(36, Math.sqrt(v / (scales[metric] || 10)) + 4))
+}
+
+function fmtVal(v) {
+  if (v == null) return null
+  return v >= 1000 ? `$${(v / 1000).toFixed(1)}B` : `$${Math.round(v)}M`
+}
+
+/* ── Component ── */
 export default function PartnershipNetwork({ onSelectCompany, darkMode }) {
   const dark = darkMode ?? false
   const [graphData, setGraphData] = useState({ nodes: [], links: [] })
   const [loading, setLoading] = useState(true)
   const [highlight, setHighlight] = useState('')
-  const [tooltip, setTooltip] = useState(null)
-  const [FG, setFG] = useState(null)
-  const [hoveredNode, setHoveredNode] = useState(null)
   const [filterType, setFilterType] = useState('all')
   const [scaleMetric, setScaleMetric] = useState('employees')
+  const [hoveredNode, setHoveredNode] = useState(null)
+  const [FG, setFG] = useState(null)
   const containerRef = useRef(null)
   const fgRef = useRef(null)
-  const animRadiiRef = useRef({})
   const [dims, setDims] = useState({ w: 800, h: 600 })
-  const layoutDoneRef = useRef(false)
+  const fitDoneRef = useRef(false)
 
+  // Lazy-load react-force-graph-2d
   useEffect(() => {
-    import('react-force-graph-2d').then((mod) => setFG(() => mod.default))
+    import('react-force-graph-2d').then((m) => setFG(() => m.default))
   }, [])
 
+  // Fetch data
   useEffect(() => {
     getCompaniesNetwork()
       .then(({ data }) => setGraphData(data))
@@ -102,250 +81,184 @@ export default function PartnershipNetwork({ onSelectCompany, darkMode }) {
       .finally(() => setLoading(false))
   }, [])
 
+  // Resize observer
   useEffect(() => {
     if (!containerRef.current) return
-    const obs = new ResizeObserver((entries) => {
-      const { width, height } = entries[0].contentRect
-      setDims({ w: width, h: height })
+    const obs = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect
+      if (width > 0 && height > 0) setDims({ w: width, h: height })
     })
     obs.observe(containerRef.current)
     return () => obs.disconnect()
   }, [])
 
-  // Animate radius transitions on metric change
-  useEffect(() => {
-    const startTime = Date.now()
-    const duration = 500
-    const animate = () => {
-      if (Date.now() - startTime < duration) {
-        fgRef.current?.refresh()
-        requestAnimationFrame(animate)
-      }
-    }
-    requestAnimationFrame(animate)
-  }, [scaleMetric])
-
-  // Configure strong repulsion for good initial spacing
+  // Configure forces
   useEffect(() => {
     const fg = fgRef.current
     if (!fg) return
     const t = setTimeout(() => {
-      const charge = fg.d3Force('charge')
-      if (charge) charge.strength(-600).distanceMax(800)
-      const center = fg.d3Force('center')
-      if (center) center.strength(0.03)
+      fg.d3Force('charge')?.strength(-400).distanceMax(600)
+      fg.d3Force('center')?.strength(0.1)
       fg.d3ReheatSimulation()
-    }, 50)
+    }, 100)
     return () => clearTimeout(t)
-  }, [FG])
+  }, [FG, graphData])
 
-  // Refresh canvas when theme changes
+  // Theme refresh
+  useEffect(() => { fgRef.current?.refresh() }, [dark])
+
+  // Animate on metric change
   useEffect(() => {
-    fgRef.current?.refresh()
-  }, [dark])
-
-  const filteredGraph = React.useMemo(() => {
-    if (filterType === 'all') return graphData
-    const filteredLinks = graphData.links.filter((l) => l.type === filterType)
-    const connectedIds = new Set()
-    filteredLinks.forEach((l) => {
-      connectedIds.add(typeof l.source === 'object' ? l.source.id : l.source)
-      connectedIds.add(typeof l.target === 'object' ? l.target.id : l.target)
-    })
-    return {
-      nodes: graphData.nodes.filter((n) => connectedIds.has(n.id)),
-      links: filteredLinks,
+    let raf
+    const start = Date.now()
+    const tick = () => {
+      if (Date.now() - start < 400) { fgRef.current?.refresh(); raf = requestAnimationFrame(tick) }
     }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [scaleMetric])
+
+  /* ── Filtered graph ── */
+  const filteredGraph = useMemo(() => {
+    if (filterType === 'all') return graphData
+    const links = graphData.links.filter((l) => l.type === filterType)
+    const ids = new Set()
+    links.forEach((l) => {
+      ids.add(typeof l.source === 'object' ? l.source.id : l.source)
+      ids.add(typeof l.target === 'object' ? l.target.id : l.target)
+    })
+    return { nodes: graphData.nodes.filter((n) => ids.has(n.id)), links }
   }, [graphData, filterType])
 
-  // Reset layout when filter changes
+  // Re-fit on filter change
   useEffect(() => {
-    layoutDoneRef.current = false
+    fitDoneRef.current = false
+    const t = setTimeout(() => fgRef.current?.zoomToFit(400, 60), 800)
+    return () => clearTimeout(t)
   }, [filterType])
 
-  // Pre-compute curvature for each link (handles parallel edges)
-  React.useMemo(() => {
-    const pairGroups = {}
+  // Compute link curvatures for parallel edges
+  useMemo(() => {
+    const groups = {}
     filteredGraph.links.forEach((link) => {
-      const srcId = typeof link.source === 'object' ? link.source.id : link.source
-      const tgtId = typeof link.target === 'object' ? link.target.id : link.target
-      const key = [srcId, tgtId].sort().join('::')
-      if (!pairGroups[key]) pairGroups[key] = []
-      pairGroups[key].push(link)
+      const s = typeof link.source === 'object' ? link.source.id : link.source
+      const t = typeof link.target === 'object' ? link.target.id : link.target
+      const key = [Math.min(s, t), Math.max(s, t)].join('::')
+      ;(groups[key] ??= []).push(link)
     })
-    Object.values(pairGroups).forEach((group) => {
-      if (group.length === 1) {
-        group[0].__curvature = 0.2
-      } else {
-        group.forEach((link, i) => {
-          link.__curvature = 0.12 + (i - (group.length - 1) / 2) * 0.16
-        })
-      }
+    Object.values(groups).forEach((g) => {
+      if (g.length === 1) { g[0]._curve = 0.15; return }
+      g.forEach((l, i) => { l._curve = 0.1 + (i - (g.length - 1) / 2) * 0.14 })
     })
   }, [filteredGraph.links])
 
-  const nodeCanvasObject = useCallback(
-    (node, ctx, globalScale) => {
-      if (node.x == null || node.y == null || isNaN(node.x) || isNaN(node.y)) return
-
-      const isHighlighted =
-        highlight && node.name.toLowerCase().includes(highlight.toLowerCase())
-      const isHovered = hoveredNode && hoveredNode.id === node.id
-
-      const targetR = getNodeRadius(node, scaleMetric)
-      const prevR = animRadiiRef.current[node.id] ?? targetR
-      const r = prevR + (targetR - prevR) * 0.18
-      animRadiiRef.current[node.id] = r
-
-      const FILLS = dark ? NODE_FILL_DARK : NODE_FILL_LIGHT
-      const fillColor = node.in_db === false
-        ? (dark ? '#1E2D3D' : '#E2E8F0')
-        : (FILLS[node.type] || FILLS.other)
-      const borderColor = node.in_db === false
-        ? (dark ? '#475569' : '#94A3B8')
-        : (NODE_COLORS[node.type] || NODE_COLORS.other)
-
-      // Ambient glow (dark mode only)
-      if (dark) {
-        const ambientGlow = ctx.createRadialGradient(node.x, node.y, r * 0.5, node.x, node.y, r + 6)
-        ambientGlow.addColorStop(0, `${borderColor}20`)
-        ambientGlow.addColorStop(1, `${borderColor}00`)
-        ctx.beginPath()
-        ctx.arc(node.x, node.y, r + 6, 0, 2 * Math.PI)
-        ctx.fillStyle = ambientGlow
-        ctx.fill()
-      }
-
-      // Glow ring for hovered / highlighted
-      if (isHovered || isHighlighted) {
-        const glowAlpha = dark ? '50' : '30'
-        const glowMid = dark ? '20' : '10'
-        const glow = ctx.createRadialGradient(node.x, node.y, r, node.x, node.y, r + 14)
-        glow.addColorStop(0, `${borderColor}${glowAlpha}`)
-        glow.addColorStop(0.5, `${borderColor}${glowMid}`)
-        glow.addColorStop(1, `${borderColor}00`)
-        ctx.beginPath()
-        ctx.arc(node.x, node.y, r + 14, 0, 2 * Math.PI)
-        ctx.fillStyle = glow
-        ctx.fill()
-      }
-
-      // Main circle
-      ctx.beginPath()
-      ctx.arc(node.x, node.y, r, 0, 2 * Math.PI)
-      ctx.fillStyle = fillColor
-      ctx.fill()
-
-      // Border
-      ctx.strokeStyle = borderColor
-      ctx.lineWidth = isHovered ? 2.5 : 1.2
-      ctx.globalAlpha = isHovered ? 1 : 0.7
-      ctx.stroke()
-      ctx.globalAlpha = 1
-
-      // External partner dashed ring
-      if (node.in_db === false) {
-        ctx.setLineDash([2, 2])
-        ctx.strokeStyle = dark ? '#64748B' : '#94A3B8'
-        ctx.lineWidth = 1
-        ctx.stroke()
-        ctx.setLineDash([])
-      }
-
-      // Label — always show
-      const fontSize = Math.max(4, Math.min(12, 11 / globalScale))
-      ctx.font = `${isHovered ? 'bold ' : ''}${fontSize}px Inter, sans-serif`
-      ctx.textAlign = 'center'
-      ctx.textBaseline = 'top'
-
-      const label = node.name.length > 24 ? node.name.slice(0, 22) + '\u2026' : node.name
-      const textY = node.y + r + 3 / globalScale
-
-      if (dark) {
-        ctx.fillStyle = 'rgba(0,0,0,0.7)'
-        ctx.fillText(label, node.x + 0.6 / globalScale, textY + 0.6 / globalScale)
-        ctx.fillStyle = isHovered ? '#ffffff' : 'rgba(255,255,255,0.82)'
-      } else {
-        ctx.fillStyle = 'rgba(255,255,255,0.85)'
-        ctx.fillText(label, node.x + 0.5 / globalScale, textY + 0.5 / globalScale)
-        ctx.fillStyle = isHovered ? '#031E49' : '#374151'
-      }
-      ctx.fillText(label, node.x, textY)
-      ctx.textBaseline = 'alphabetic'
-    },
-    [highlight, hoveredNode, scaleMetric, dark]
-  )
-
-  const linkCanvasObject = useCallback((link, ctx, globalScale) => {
-    const start = link.source
-    const end = link.target
-    if (!start || !end || typeof start !== 'object' || typeof end !== 'object') return
-    if (start.x == null || end.x == null || start.y == null || end.y == null) return
-
-    const dx = end.x - start.x
-    const dy = end.y - start.y
-    const dist = Math.sqrt(dx * dx + dy * dy)
-    if (dist < 1) return
-
-    const nx = -dy / dist
-    const ny = dx / dist
-
-    const curvature = link.__curvature || 0.2
-    const srcId = start.id != null ? start.id : 0
-    const tgtId = end.id != null ? end.id : 0
-    const sign = srcId < tgtId ? 1 : -1
-    const perpDist = curvature * dist * sign
-
-    const midX = (start.x + end.x) / 2
-    const midY = (start.y + end.y) / 2
-    const cpX = midX + nx * perpDist
-    const cpY = midY + ny * perpDist
-
-    const color = LINK_COLORS[link.type] || LINK_COLORS.Other
-
-    ctx.strokeStyle = color
-    ctx.lineWidth = Math.max(0.8, 1.5 / globalScale)
-    ctx.globalAlpha = dark ? 0.5 : 0.65
-    ctx.beginPath()
-    ctx.moveTo(start.x, start.y)
-    ctx.quadraticCurveTo(cpX, cpY, end.x, end.y)
-    ctx.stroke()
-
-    // Arrowhead
-    const tangentAngle = Math.atan2(end.y - cpY, end.x - cpX)
-    const targetR = getNodeRadius(end, scaleMetric) + 3
-    const arrowTipX = end.x - Math.cos(tangentAngle) * targetR
-    const arrowTipY = end.y - Math.sin(tangentAngle) * targetR
-    const arrowLen = Math.max(4, 7 / globalScale)
-    const arrowHalf = Math.PI / 7
-
-    ctx.fillStyle = color
-    ctx.globalAlpha = dark ? 0.7 : 0.8
-    ctx.beginPath()
-    ctx.moveTo(arrowTipX, arrowTipY)
-    ctx.lineTo(
-      arrowTipX - arrowLen * Math.cos(tangentAngle - arrowHalf),
-      arrowTipY - arrowLen * Math.sin(tangentAngle - arrowHalf)
-    )
-    ctx.lineTo(
-      arrowTipX - arrowLen * Math.cos(tangentAngle + arrowHalf),
-      arrowTipY - arrowLen * Math.sin(tangentAngle + arrowHalf)
-    )
-    ctx.closePath()
-    ctx.fill()
-    ctx.globalAlpha = 1
-  }, [scaleMetric, dark])
-
-  const linkTypes = React.useMemo(
+  const linkTypes = useMemo(
     () => [...new Set(graphData.links.map((l) => l.type).filter(Boolean))],
     [graphData.links]
   )
 
-  const FILLS = dark ? NODE_FILL_DARK : NODE_FILL_LIGHT
+  /* ── Canvas: node ── */
+  const paintNode = useCallback((node, ctx, globalScale) => {
+    if (node.x == null || node.y == null) return
+    const r = nodeRadius(node, scaleMetric)
+    const { fill, border } = node.in_db === false
+      ? { fill: dark ? '#1E293B' : '#E2E8F0', border: dark ? '#475569' : '#94A3B8' }
+      : typeColors(node.type, dark)
+    const isHl = highlight && node.name.toLowerCase().includes(highlight.toLowerCase())
+    const isHov = hoveredNode?.id === node.id
 
+    // Glow for hovered/highlighted
+    if (isHov || isHl) {
+      const g = ctx.createRadialGradient(node.x, node.y, r, node.x, node.y, r + 12)
+      g.addColorStop(0, border + (dark ? '50' : '30'))
+      g.addColorStop(1, border + '00')
+      ctx.beginPath(); ctx.arc(node.x, node.y, r + 12, 0, Math.PI * 2)
+      ctx.fillStyle = g; ctx.fill()
+    }
+
+    // Circle
+    ctx.beginPath(); ctx.arc(node.x, node.y, r, 0, Math.PI * 2)
+    ctx.fillStyle = fill; ctx.fill()
+    ctx.strokeStyle = border
+    ctx.lineWidth = isHov ? 2.5 : 1.2
+    ctx.globalAlpha = isHov ? 1 : 0.8
+    ctx.stroke(); ctx.globalAlpha = 1
+
+    // Dashed ring for external
+    if (node.in_db === false) {
+      ctx.setLineDash([2, 2]); ctx.strokeStyle = dark ? '#64748B' : '#94A3B8'
+      ctx.lineWidth = 1; ctx.stroke(); ctx.setLineDash([])
+    }
+
+    // Label
+    const fs = Math.max(4, Math.min(11, 10 / globalScale))
+    ctx.font = `${isHov ? 'bold ' : ''}${fs}px Inter, system-ui, sans-serif`
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top'
+    const label = node.name.length > 22 ? node.name.slice(0, 20) + '\u2026' : node.name
+    const ty = node.y + r + 2.5 / globalScale
+
+    // Shadow
+    ctx.fillStyle = dark ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.8)'
+    ctx.fillText(label, node.x + 0.5 / globalScale, ty + 0.5 / globalScale)
+    // Text
+    ctx.fillStyle = dark
+      ? (isHov ? '#fff' : 'rgba(255,255,255,0.8)')
+      : (isHov ? '#0F172A' : '#374151')
+    ctx.fillText(label, node.x, ty)
+    ctx.textBaseline = 'alphabetic'
+  }, [highlight, hoveredNode, scaleMetric, dark])
+
+  /* ── Canvas: link ── */
+  const paintLink = useCallback((link, ctx, globalScale) => {
+    const s = link.source, t = link.target
+    if (!s || !t || typeof s !== 'object' || typeof t !== 'object') return
+    if (s.x == null || t.x == null) return
+
+    const dx = t.x - s.x, dy = t.y - s.y
+    const dist = Math.sqrt(dx * dx + dy * dy)
+    if (dist < 1) return
+
+    // Control point for curved edge
+    const nx = -dy / dist, ny = dx / dist
+    const curve = link._curve || 0.15
+    const sign = (s.id ?? 0) < (t.id ?? 0) ? 1 : -1
+    const cpX = (s.x + t.x) / 2 + nx * curve * dist * sign
+    const cpY = (s.y + t.y) / 2 + ny * curve * dist * sign
+
+    const color = LINK_COLORS[link.type] || LINK_COLORS.Other
+
+    ctx.strokeStyle = color
+    ctx.lineWidth = Math.max(0.6, 1.2 / globalScale)
+    ctx.globalAlpha = dark ? 0.45 : 0.6
+    ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.quadraticCurveTo(cpX, cpY, t.x, t.y); ctx.stroke()
+
+    // Arrowhead
+    const angle = Math.atan2(t.y - cpY, t.x - cpX)
+    const tr = nodeRadius(t, scaleMetric) + 2
+    const ax = t.x - Math.cos(angle) * tr
+    const ay = t.y - Math.sin(angle) * tr
+    const al = Math.max(3.5, 6 / globalScale)
+    const ah = Math.PI / 7
+    ctx.fillStyle = color; ctx.globalAlpha = dark ? 0.6 : 0.75
+    ctx.beginPath(); ctx.moveTo(ax, ay)
+    ctx.lineTo(ax - al * Math.cos(angle - ah), ay - al * Math.sin(angle - ah))
+    ctx.lineTo(ax - al * Math.cos(angle + ah), ay - al * Math.sin(angle + ah))
+    ctx.closePath(); ctx.fill()
+    ctx.globalAlpha = 1
+  }, [scaleMetric, dark])
+
+  /* ── Hit area ── */
+  const pointerArea = useCallback((node, color, ctx) => {
+    if (node.x == null || node.y == null) return
+    const r = nodeRadius(node, scaleMetric) + 4
+    ctx.beginPath(); ctx.arc(node.x, node.y, r, 0, Math.PI * 2)
+    ctx.fillStyle = color; ctx.fill()
+  }, [scaleMetric])
+
+  /* ── Loading / empty states ── */
   if (loading || !FG) {
     return (
-      <div className="flex items-center justify-center h-full bg-[#F0F4F8] text-gray-500">
+      <div className={`flex items-center justify-center h-full ${dark ? 'bg-[#0D1B2E] text-gray-400' : 'bg-[#F0F4F8] text-gray-500'}`}>
         {loading ? 'Loading network data\u2026' : 'Initializing graph\u2026'}
       </div>
     )
@@ -353,40 +266,48 @@ export default function PartnershipNetwork({ onSelectCompany, darkMode }) {
 
   if (graphData.links.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center h-full bg-[#F0F4F8] text-gray-400 gap-3">
-        <div className="text-lg font-medium text-gray-600">No partnership data yet</div>
-        <div className="text-sm text-center max-w-xs text-gray-500">
-          Go to the AI Research tab and run &ldquo;Research a Company&rdquo; on a few companies.
-          The AI will extract their partnerships and populate this graph.
+      <div className={`flex flex-col items-center justify-center h-full gap-3 ${dark ? 'bg-[#0D1B2E]' : 'bg-[#F0F4F8]'}`}>
+        <div className={`text-lg font-medium ${dark ? 'text-gray-300' : 'text-gray-600'}`}>No partnership data yet</div>
+        <div className={`text-sm text-center max-w-xs ${dark ? 'text-gray-500' : 'text-gray-400'}`}>
+          Go to the AI Research tab and run &ldquo;Research a Company&rdquo; to populate partnerships.
         </div>
       </div>
     )
   }
 
+  const bg = dark ? '#0D1B2E' : '#F0F4F8'
+  const panelBg = dark ? 'bg-[#0F1D2F]' : 'bg-white'
+  const borderClr = dark ? 'border-gray-700' : 'border-[#B8CAD1]'
+  const textMuted = dark ? 'text-gray-400' : 'text-gray-500'
+  const textNormal = dark ? 'text-gray-200' : 'text-gray-600'
+
   return (
-    <div className="flex flex-col flex-1 min-h-0 bg-[#F0F4F8]">
-      {/* Controls */}
-      <div className="bg-white border-b border-[#B8CAD1] px-4 py-2.5 flex items-center gap-4 flex-wrap">
+    <div className={`flex flex-col flex-1 min-h-0 ${dark ? 'bg-[#0D1B2E]' : 'bg-[#F0F4F8]'}`}>
+      {/* ── Controls bar ── */}
+      <div className={`${panelBg} border-b ${borderClr} px-4 py-2.5 flex items-center gap-4 flex-wrap`}>
         <input
           type="text"
           placeholder="Highlight company\u2026"
           value={highlight}
           onChange={(e) => setHighlight(e.target.value)}
-          className="border border-[#B8CAD1] rounded px-3 py-1.5 text-sm w-52 focus:outline-none focus:ring-2 focus:ring-[#4599FE]"
+          className={`border rounded px-3 py-1.5 text-sm w-48 focus:outline-none focus:ring-2 focus:ring-[#4599FE] ${
+            dark ? 'bg-[#1E293B] border-gray-600 text-gray-200 placeholder-gray-500'
+                 : 'border-[#B8CAD1] text-gray-800 placeholder-gray-400'
+          }`}
         />
 
-        {/* Scale by selector */}
+        {/* Scale by */}
         <div className="flex items-center gap-2">
-          <span className="text-xs text-gray-500 whitespace-nowrap">Scale by:</span>
+          <span className={`text-xs ${textMuted} whitespace-nowrap`}>Scale by:</span>
           <div className="flex gap-1">
-            {SCALE_METRICS.map((m) => (
+            {SCALE_OPTIONS.map((m) => (
               <button
                 key={m.key}
                 onClick={() => setScaleMetric(m.key)}
                 className={`text-xs px-2.5 py-1 rounded-full border transition-colors whitespace-nowrap ${
                   scaleMetric === m.key
-                    ? 'bg-[#031E49] text-white border-[#031E49]'
-                    : 'border-[#B8CAD1] text-gray-600 hover:border-[#4599FE]'
+                    ? (dark ? 'bg-blue-600 text-white border-blue-600' : 'bg-[#031E49] text-white border-[#031E49]')
+                    : `${dark ? 'border-gray-600 text-gray-400 hover:border-blue-500' : 'border-[#B8CAD1] text-gray-600 hover:border-[#4599FE]'}`
                 }`}
               >
                 {m.label}
@@ -397,13 +318,13 @@ export default function PartnershipNetwork({ onSelectCompany, darkMode }) {
 
         {/* Link type filter */}
         <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-xs text-gray-500 mr-1">Filter:</span>
+          <span className={`text-xs ${textMuted} mr-1`}>Filter:</span>
           <button
             onClick={() => setFilterType('all')}
             className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
               filterType === 'all'
-                ? 'bg-[#031E49] text-white border-[#031E49]'
-                : 'border-[#B8CAD1] text-gray-600 hover:border-[#4599FE]'
+                ? (dark ? 'bg-blue-600 text-white border-blue-600' : 'bg-[#031E49] text-white border-[#031E49]')
+                : `${dark ? 'border-gray-600 text-gray-400 hover:border-blue-500' : 'border-[#B8CAD1] text-gray-600 hover:border-[#4599FE]'}`
             }`}
           >
             All
@@ -415,126 +336,91 @@ export default function PartnershipNetwork({ onSelectCompany, darkMode }) {
               className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
                 filterType === type
                   ? 'text-white border-transparent'
-                  : 'border-[#B8CAD1] text-gray-600 hover:border-[#4599FE]'
+                  : `${dark ? 'border-gray-600 text-gray-400 hover:border-blue-500' : 'border-[#B8CAD1] text-gray-600 hover:border-[#4599FE]'}`
               }`}
-              style={filterType === type ? { backgroundColor: LINK_COLORS[type] || '#64748B' } : {}}
+              style={filterType === type ? { backgroundColor: LINK_COLORS[type] || '#94A3B8' } : {}}
             >
               {type}
             </button>
           ))}
         </div>
 
-        <div className="ml-auto flex items-center gap-4 text-xs text-gray-500">
+        <div className={`ml-auto flex items-center gap-4 text-xs ${textMuted}`}>
           <span>{filteredGraph.nodes.length} companies</span>
           <span>{filteredGraph.links.length} partnerships</span>
-          <span className="text-gray-400">Scroll to zoom · Drag to pan · Drag nodes to rearrange</span>
         </div>
       </div>
 
-      {/* Legend */}
-      <div className="bg-[#F0F4F8] border-b border-[#B8CAD1] px-4 py-1.5 flex items-center gap-5 flex-wrap">
+      {/* ── Legend ── */}
+      <div className={`${dark ? 'bg-[#0D1B2E]' : 'bg-[#F0F4F8]'} border-b ${borderClr} px-4 py-1.5 flex items-center gap-5 flex-wrap`}>
         <div className="flex items-center gap-3 flex-wrap">
-          <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">Node:</span>
-          {Object.entries(FILLS).slice(0, 7).map(([type, color]) => (
+          <span className={`text-xs font-medium ${textMuted} uppercase tracking-wider`}>Node:</span>
+          {Object.entries(TYPE_COLORS).filter(([k]) => k !== 'other').map(([type, c]) => (
             <div key={type} className="flex items-center gap-1">
-              <span
-                className="w-3 h-3 rounded-full inline-block border"
-                style={{ backgroundColor: color, borderColor: NODE_COLORS[type] || '#64748B' }}
-              />
-              <span className="text-xs text-gray-600 capitalize">{type}</span>
+              <span className="w-2.5 h-2.5 rounded-full inline-block border"
+                style={{ backgroundColor: dark ? c.dark : c.light, borderColor: c.border }} />
+              <span className={`text-xs ${textNormal}`}>{type}</span>
             </div>
           ))}
         </div>
         <div className="flex items-center gap-3 ml-4 flex-wrap">
-          <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">Link:</span>
+          <span className={`text-xs font-medium ${textMuted} uppercase tracking-wider`}>Link:</span>
           {Object.entries(LINK_COLORS).map(([type, color]) => (
             <div key={type} className="flex items-center gap-1">
-              <svg width="20" height="10" viewBox="0 0 20 10" className="inline-block">
-                <path d="M2 8 Q10 -2 18 8" stroke={color} fill="none" strokeWidth="1.5" opacity="0.7" />
-                <polygon points="18,8 14,6 15,9" fill={color} opacity="0.7" />
+              <svg width="18" height="8" viewBox="0 0 18 8" className="inline-block">
+                <path d="M1 7 Q9 -1 17 7" stroke={color} fill="none" strokeWidth="1.5" opacity="0.65" />
+                <polygon points="17,7 13,5.5 14,8" fill={color} opacity="0.65" />
               </svg>
-              <span className="text-xs text-gray-600">{type}</span>
+              <span className={`text-xs ${textNormal}`}>{type}</span>
             </div>
           ))}
-          <div className="flex items-center gap-1">
-            <span className="w-3 h-3 rounded-full inline-block border-2 border-dashed border-gray-400" />
-            <span className="text-xs text-gray-500">External partner</span>
+          <div className="flex items-center gap-1 ml-1">
+            <span className={`w-2.5 h-2.5 rounded-full inline-block border-2 border-dashed ${dark ? 'border-gray-500' : 'border-gray-400'}`} />
+            <span className={`text-xs ${textMuted}`}>External partner</span>
           </div>
         </div>
       </div>
 
-      {/* Graph canvas */}
-      <div ref={containerRef} className="flex-1 relative">
+      {/* ── Graph ── */}
+      <div ref={containerRef} className="flex-1 relative min-h-0">
         <FG
           ref={fgRef}
           graphData={filteredGraph}
           width={dims.w}
           height={dims.h}
-          nodeCanvasObject={nodeCanvasObject}
+          nodeCanvasObject={paintNode}
           nodeCanvasObjectMode={() => 'replace'}
-          linkCanvasObject={linkCanvasObject}
+          linkCanvasObject={paintLink}
           linkCanvasObjectMode={() => 'replace'}
+          nodePointerAreaPaint={pointerArea}
           enableNodeDrag={true}
-          onNodeDrag={(node) => {
-            // Magnet behavior: just move this node, arrows stretch
-            node.fx = node.x
-            node.fy = node.y
-          }}
-          onNodeDragEnd={(node) => {
-            node.fx = node.x
-            node.fy = node.y
-          }}
-          onNodeClick={(node) => {
-            if (node.in_db !== false && onSelectCompany) {
-              onSelectCompany(node.id)
-            }
-          }}
-          onNodeHover={(node) => {
-            setHoveredNode(node || null)
-            if (node) {
-              setTooltip({
-                name: node.name,
-                type: node.type,
-                employees: node.employees,
-                market_cap_usd: node.market_cap_usd,
-                revenue_usd: node.revenue_usd,
-                total_funding_usd: node.total_funding_usd,
-                segment: node.segment,
-                in_db: node.in_db,
-              })
-            } else {
-              setTooltip(null)
-            }
-          }}
-          nodePointerAreaPaint={(node, color, ctx) => {
-            if (node.x == null || node.y == null || isNaN(node.x) || isNaN(node.y)) return
-            const r = getNodeRadius(node, scaleMetric)
-            ctx.beginPath()
-            ctx.arc(node.x, node.y, r + 4, 0, 2 * Math.PI)
-            ctx.fillStyle = color
-            ctx.fill()
-          }}
-          backgroundColor={dark ? '#0D1B2E' : '#F0F4F8'}
-          cooldownTicks={300}
-          d3AlphaDecay={0.01}
-          d3VelocityDecay={0.3}
-          d3AlphaMin={0.001}
-          d3LinkDistance={400}
+          onNodeDrag={(node) => { node.fx = node.x; node.fy = node.y }}
+          onNodeDragEnd={(node) => { node.fx = node.x; node.fy = node.y }}
+          onNodeClick={(node) => { if (node.in_db !== false && onSelectCompany) onSelectCompany(node.id) }}
+          onNodeHover={(node) => setHoveredNode(node || null)}
+          backgroundColor={bg}
+          cooldownTicks={250}
+          d3AlphaDecay={0.015}
+          d3VelocityDecay={0.35}
+          d3AlphaMin={0.002}
+          warmupTicks={50}
           onEngineStop={() => {
-            if (layoutDoneRef.current) return
-            layoutDoneRef.current = true
-            // Pin all nodes — whiteboard mode: nodes stay where placed
-            filteredGraph.nodes.forEach((node) => {
-              node.fx = node.x
-              node.fy = node.y
-            })
+            if (fitDoneRef.current) return
+            fitDoneRef.current = true
+            // Pin nodes after layout settles
+            filteredGraph.nodes.forEach((n) => { n.fx = n.x; n.fy = n.y })
+            fgRef.current?.zoomToFit(400, 60)
           }}
         />
 
-        {/* Fit All button — bottom left */}
+        {/* Fit All button */}
         <button
           onClick={() => fgRef.current?.zoomToFit(400, 60)}
-          className="absolute bottom-4 left-4 z-10 bg-white border border-[#B8CAD1] rounded-lg shadow px-3 py-2 text-xs font-medium text-gray-600 hover:bg-[#F0F4F8] hover:border-[#4599FE] hover:text-[#4599FE] transition-colors flex items-center gap-1.5"
+          className={`absolute bottom-4 left-4 z-10 rounded-lg shadow px-3 py-2 text-xs font-medium transition-colors flex items-center gap-1.5
+            ${dark
+              ? 'bg-[#1E293B] border border-gray-600 text-gray-300 hover:bg-[#2D3B4F] hover:border-blue-500 hover:text-blue-400'
+              : 'bg-white border border-[#B8CAD1] text-gray-600 hover:bg-[#F0F4F8] hover:border-[#4599FE] hover:text-[#4599FE]'
+            }`}
           title="Fit all nodes in view"
         >
           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
@@ -544,70 +430,57 @@ export default function PartnershipNetwork({ onSelectCompany, darkMode }) {
         </button>
 
         {/* Tooltip card */}
-        {tooltip && (
-          <div className="absolute top-4 left-4 bg-white rounded-xl shadow-lg px-4 py-3 text-sm border border-[#B8CAD1] pointer-events-none max-w-[240px]">
-            <div className="font-semibold text-[#031E49] leading-tight">{tooltip.name}</div>
-            {tooltip.in_db === false && (
-              <div className="text-xs text-amber-600 font-medium mt-0.5">External partner</div>
+        {hoveredNode && (
+          <div className={`absolute top-4 left-4 rounded-xl shadow-lg px-4 py-3 text-sm border pointer-events-none max-w-[240px]
+            ${dark ? 'bg-[#1E293B] border-gray-600' : 'bg-white border-[#B8CAD1]'}`}
+          >
+            <div className={`font-semibold leading-tight ${dark ? 'text-gray-100' : 'text-[#031E49]'}`}>
+              {hoveredNode.name}
+            </div>
+            {hoveredNode.in_db === false && (
+              <div className="text-xs text-amber-500 font-medium mt-0.5">External partner</div>
             )}
-            {tooltip.type && tooltip.type !== 'other' && (
+            {hoveredNode.type && hoveredNode.type !== 'other' && (
               <div className="flex items-center gap-1.5 mt-1">
-                <span
-                  className="w-2 h-2 rounded-full inline-block"
-                  style={{ backgroundColor: FILLS[tooltip.type] || '#475569' }}
-                />
-                <span className="text-xs text-gray-500 capitalize">{tooltip.type}</span>
+                <span className="w-2 h-2 rounded-full inline-block"
+                  style={{ backgroundColor: typeColors(hoveredNode.type, dark).fill }} />
+                <span className={`text-xs ${textMuted}`}>{hoveredNode.type}</span>
               </div>
             )}
-            {tooltip.segment && (
-              <div className="text-xs text-gray-400 mt-0.5">{tooltip.segment}</div>
+            {hoveredNode.segment && (
+              <div className={`text-xs mt-0.5 ${dark ? 'text-gray-500' : 'text-gray-400'}`}>{hoveredNode.segment}</div>
             )}
-            {tooltip.in_db !== false && (
+            {hoveredNode.in_db !== false && (
               <div className="mt-2 space-y-0.5">
-                {tooltip.employees && (
-                  <div className="text-xs text-gray-600 flex justify-between gap-4">
-                    <span className="text-gray-400">Employees</span>
-                    <span className="font-medium">{tooltip.employees.toLocaleString()}</span>
-                  </div>
+                {hoveredNode.employees != null && (
+                  <Row dark={dark} label="Employees" value={hoveredNode.employees.toLocaleString()} />
                 )}
-                {tooltip.market_cap_usd && (
-                  <div className="text-xs text-gray-600 flex justify-between gap-4">
-                    <span className="text-gray-400">Market Cap</span>
-                    <span className="font-medium">
-                      {tooltip.market_cap_usd >= 1000
-                        ? `$${(tooltip.market_cap_usd / 1000).toFixed(1)}B`
-                        : `$${tooltip.market_cap_usd}M`}
-                    </span>
-                  </div>
+                {hoveredNode.revenue_usd != null && (
+                  <Row dark={dark} label="Revenue" value={fmtVal(hoveredNode.revenue_usd)} />
                 )}
-                {tooltip.revenue_usd && (
-                  <div className="text-xs text-gray-600 flex justify-between gap-4">
-                    <span className="text-gray-400">Revenue</span>
-                    <span className="font-medium">
-                      {tooltip.revenue_usd >= 1000
-                        ? `$${(tooltip.revenue_usd / 1000).toFixed(1)}B`
-                        : `$${tooltip.revenue_usd}M`}
-                    </span>
-                  </div>
+                {hoveredNode.market_cap_usd != null && (
+                  <Row dark={dark} label="Total Assets" value={fmtVal(hoveredNode.market_cap_usd)} />
                 )}
-                {tooltip.total_funding_usd && (
-                  <div className="text-xs text-gray-600 flex justify-between gap-4">
-                    <span className="text-gray-400">Total Funding</span>
-                    <span className="font-medium">
-                      {tooltip.total_funding_usd >= 1000
-                        ? `$${(tooltip.total_funding_usd / 1000).toFixed(1)}B`
-                        : `$${tooltip.total_funding_usd}M`}
-                    </span>
-                  </div>
+                {hoveredNode.total_funding_usd != null && (
+                  <Row dark={dark} label="Total Funding" value={fmtVal(hoveredNode.total_funding_usd)} />
                 )}
               </div>
             )}
-            {tooltip.in_db !== false && (
+            {hoveredNode.in_db !== false && (
               <div className="text-xs text-[#4599FE] mt-2">Click to open profile</div>
             )}
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+function Row({ dark, label, value }) {
+  return (
+    <div className="text-xs flex justify-between gap-4">
+      <span className={dark ? 'text-gray-500' : 'text-gray-400'}>{label}</span>
+      <span className={`font-medium ${dark ? 'text-gray-200' : 'text-gray-700'}`}>{value}</span>
     </div>
   )
 }

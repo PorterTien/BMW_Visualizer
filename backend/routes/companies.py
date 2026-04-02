@@ -48,8 +48,28 @@ def _company_dict(c: Company) -> dict:
         "notes": c.notes,
         "summary": c.summary,
         "long_description": c.long_description,
+        "extra_description": c.extra_description,
         "naatbatt_member": bool(c.naatbatt_member),
         "naatbatt_id": c.naatbatt_id,
+        "contact_email2": c.contact_email2,
+        "sources": c.sources,
+        "sources2": c.sources2,
+        "qc": c.qc,
+        "qc_date": c.qc_date,
+        "summary_word_count": c.summary_word_count,
+        "employee_size": c.employee_size,
+        "funding_status": c.funding_status,
+        "crunchbase_url": c.crunchbase_url,
+        "linkedin_url": c.linkedin_url,
+        "pitchbook_url": c.pitchbook_url,
+        "volta_member": bool(c.volta_member),
+        "volta_verified": bool(c.volta_verified),
+        "products": c.products,
+        "product_services_desc": c.product_services_desc,
+        "battery_chemistry_flags": json.loads(c.battery_chemistry_flags or "{}"),
+        "supply_chain_flags": json.loads(c.supply_chain_flags or "{}"),
+        "gwh_capacity": json.loads(c.gwh_capacity or "{}"),
+        "plant_start_date": c.plant_start_date,
         "last_updated": c.last_updated,
         "data_source": c.data_source,
     }
@@ -83,27 +103,71 @@ def list_companies(
 
 @router.get("/map")
 def companies_map(db: Session = Depends(get_db)):
-    companies = db.query(Company).filter(
-        Company.company_hq_lat.isnot(None),
-        Company.company_hq_lng.isnot(None),
-    ).all()
-    return [
-        {
-            "id": c.id,
-            "company_name": c.company_name,
-            "company_type": c.company_type,
-            "company_status": c.company_status,
-            "company_hq_city": c.company_hq_city,
-            "company_hq_state": c.company_hq_state,
-            "company_hq_country": c.company_hq_country,
-            "lat": c.company_hq_lat,
-            "lng": c.company_hq_lng,
-            "company_website": c.company_website,
-            "supply_chain_segment": c.supply_chain_segment,
-            "naatbatt_member": bool(c.naatbatt_member),
-        }
-        for c in companies
-    ]
+    companies = db.query(Company).all()
+    results = []
+    for c in companies:
+        locations = json.loads(c.company_locations or "[]")
+        # Emit one marker per facility that has coordinates
+        for loc in locations:
+            lat = loc.get("lat")
+            lng = loc.get("lng")
+            if lat is not None and lng is not None:
+                results.append({
+                    "id": c.id,
+                    "company_name": c.company_name,
+                    "company_type": c.company_type,
+                    "company_status": c.company_status,
+                    "supply_chain_segment": loc.get("segment") or c.supply_chain_segment,
+                    "company_website": c.company_website,
+                    "naatbatt_member": bool(c.naatbatt_member),
+                    "lat": lat,
+                    "lng": lng,
+                    "is_hq": False,
+                    "facility_name": loc.get("facility_name"),
+                    "facility_city": loc.get("city"),
+                    "facility_state": loc.get("state"),
+                    "facility_country": loc.get("country"),
+                    "product": loc.get("product"),
+                    "product_type": loc.get("product_type"),
+                    "status": loc.get("status"),
+                    "capacity": loc.get("capacity"),
+                    "capacity_units": loc.get("capacity_units"),
+                    "workforce": loc.get("workforce"),
+                    "chemistries": loc.get("chemistries"),
+                })
+        # Also emit HQ marker if it has coordinates and isn't a duplicate
+        # of an existing facility location
+        if c.company_hq_lat is not None and c.company_hq_lng is not None:
+            facility_coords = {
+                (loc.get("lat"), loc.get("lng"))
+                for loc in locations
+                if loc.get("lat") is not None and loc.get("lng") is not None
+            }
+            if (c.company_hq_lat, c.company_hq_lng) not in facility_coords:
+                results.append({
+                    "id": c.id,
+                    "company_name": c.company_name,
+                    "company_type": c.company_type,
+                    "company_status": c.company_status,
+                    "supply_chain_segment": c.supply_chain_segment,
+                    "company_website": c.company_website,
+                    "naatbatt_member": bool(c.naatbatt_member),
+                    "lat": c.company_hq_lat,
+                    "lng": c.company_hq_lng,
+                    "is_hq": True,
+                    "facility_name": None,
+                    "facility_city": c.company_hq_city,
+                    "facility_state": c.company_hq_state,
+                    "facility_country": c.company_hq_country,
+                    "product": None,
+                    "product_type": None,
+                    "status": c.company_status,
+                    "capacity": None,
+                    "capacity_units": None,
+                    "workforce": None,
+                    "chemistries": c.chemistries,
+                })
+    return results
 
 
 @router.get("/network")
@@ -208,6 +272,14 @@ def get_company(company_id: int, db: Session = Depends(get_db)):
         .all()
     ]
     return data
+
+
+@router.post("/enrich/sec-edgar")
+def enrich_sec_edgar(db: Session = Depends(get_db)):
+    """Trigger SEC EDGAR enrichment for all companies."""
+    from backend.sec_edgar import run_enrichment
+    result = run_enrichment(db)
+    return result
 
 
 class ResearchRequest(BaseModel):

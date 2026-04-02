@@ -35,8 +35,30 @@ class Company(Base):
     notes = Column(Text)
     summary = Column(Text)
     long_description = Column(Text)
+    extra_description = Column(Text)      # Column1 from XLSX (additional profile text)
     naatbatt_member = Column(Integer, default=0)
     naatbatt_id = Column(Text)
+    contact_email2 = Column(Text)         # second contact email
+    sources = Column(Text)                # data sources/references (aggregated)
+    sources2 = Column(Text)               # additional sources
+    qc = Column(Text)                     # QC reviewer initials (aggregated)
+    qc_date = Column(Text)               # QC date (aggregated)
+    summary_word_count = Column(Integer)  # word count of summary
+    # BBD (Volta Foundation) fields
+    employee_size = Column(Text)          # e.g. "11-50", "501-1000"
+    funding_status = Column(Text)         # e.g. "Private", "Public", "Acquired"
+    crunchbase_url = Column(Text)
+    linkedin_url = Column(Text)
+    pitchbook_url = Column(Text)
+    volta_member = Column(Integer, default=0)
+    volta_verified = Column(Integer, default=0)
+    products = Column(Text)               # product list
+    product_services_desc = Column(Text)  # product/services description
+    battery_chemistry_flags = Column(Text)  # JSON obj of chemistry booleans
+    supply_chain_flags = Column(Text)     # JSON obj of supply chain booleans
+    # Gigafactory fields
+    gwh_capacity = Column(Text)           # JSON: {"2022": 60, "2023": 65, ...}
+    plant_start_date = Column(Text)       # earliest plant start date
     last_updated = Column(Text)
     data_source = Column(Text)
 

@@ -28,18 +28,28 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
 log = logging.getLogger(__name__)
 
 SEGMENT_TO_TYPE = {
-    "Raw Materials": "materials supplier",
-    "Battery Grade Materials": "materials supplier",
-    "Other Battery Components & Mat.": "materials supplier",
-    "Electrode & Cell Manufacturing": "cell supplier",
-    "Module-Pack Manufacturing": "cell supplier",
-    "Recycling-Repurposing": "recycler",
-    "Equipment": "equipment supplier",
+    # Sheet names → use the NAATBatt category names directly
+    "Raw Materials": "Raw Materials",
+    "Battery Grade Materials": "Battery Grade Materials",
+    "Other Battery Components & Mat.": "Other Battery Components & Mat.",
+    "Electrode & Cell Manufacturing": "Electrode & Cell Manufacturing",
+    "Module-Pack Manufacturing": "Module-Pack Manufacturing",
+    "Recycling-Repurposing": "Recycling-Repurposing",
+    "Equipment": "Equipment",
     "R&D": "R&D",
-    "Services & Consulting": "services",
-    "Modeling & Software": "modeling/software",
-    "Distributors": "services",
-    "Professional Services (NB)": "services",
+    "Services & Consulting": "Services & Consulting",
+    "Modeling & Software": "Modeling & Software",
+    "Distributors": "Distributors",
+    "Professional Services (NB)": "Professional Services",
+    # Supply Chain Segment column values (fallback for Append2-only companies)
+    "Upstream": "Raw Materials",
+    "Midstream": "Electrode & Cell Manufacturing",
+    "Downstream": "Module-Pack Manufacturing",
+    "Other - Equipment": "Equipment",
+    "Other - Equipment ": "Equipment",
+    "Other - Research": "R&D",
+    "Other - Service & Repair": "Services & Consulting",
+    "Other - Modeling and Software": "Modeling & Software",
 }
 
 
@@ -119,13 +129,38 @@ def parse_xlsx() -> dict[str, dict]:
     available = xl.sheet_names
     log.info("Sheets in file: %s", available)
 
+    # Process specific category sheets first so company_type is set from the
+    # sheet name. Append2 (aggregate sheet) is processed last to fill gaps
+    # without overwriting the more specific types.
+    SPECIFIC_SHEETS = {
+        "Raw Materials", "Battery Grade Materials",
+        "Other Battery Components & Mat.", "Electrode & Cell Manufacturing",
+        "Module-Pack Manufacturing", "Recycling-Repurposing", "Equipment",
+        "R&D", "Services & Consulting", "Modeling & Software",
+        "Distributors", "Professional Services (NB)",
+    }
+    ordered = [s for s in available if s in SPECIFIC_SHEETS]
+    ordered += [s for s in available if s not in SPECIFIC_SHEETS]
+
     # normalized_name -> {fields..., locations: [...]}
     companies: dict[str, dict] = {}
 
-    for sheet in available:
+    for sheet in ordered:
         df = xl.parse(sheet, dtype=str)
         # Normalize column names: strip whitespace + collapse double spaces
         df.columns = [" ".join(str(c).split()) for c in df.columns]
+
+        # Deduplicate column names — append _2, _3, etc. for repeats
+        seen: dict[str, int] = {}
+        new_cols = []
+        for col in df.columns:
+            if col in seen:
+                seen[col] += 1
+                new_cols.append(f"{col}_{seen[col]}")
+            else:
+                seen[col] = 1
+                new_cols.append(col)
+        df.columns = new_cols
 
         # Only parse sheets that have a "Company" column
         if "Company" not in df.columns:
@@ -162,9 +197,11 @@ def parse_xlsx() -> dict[str, dict]:
             capacity_units = _safe_str(
                 row.get("Capacity Units") or row.get("Production Units")
             )
-            # Use segment from data column when available; fall back to sheet name
+            # Store the raw Supply Chain Segment column value
             segment = _safe_str(row.get("Supply Chain Segment")) or sheet
-            company_type = SEGMENT_TO_TYPE.get(segment, "other")
+            # Always derive company_type from the sheet name — the sheet
+            # categorisation IS the NAATBatt classification
+            company_type = SEGMENT_TO_TYPE.get(sheet, SEGMENT_TO_TYPE.get(segment, "other"))
 
             location = {
                 "facility_name": _safe_str(row.get("Facility Name")),
@@ -184,16 +221,29 @@ def parse_xlsx() -> dict[str, dict]:
                 "workforce": _safe_str(row.get("Facility Workforce")),
                 "capacity": capacity,
                 "capacity_units": capacity_units,
+                "sources": _safe_str(row.get("Sources")),
+                "sources2": _safe_str(row.get("Sources2")),
+                "qc": _safe_str(row.get("QC")),
+                "qc_date": _safe_str(row.get("QC Date")),
+                "segment": segment,
             }
 
             # Handle column-name variations for contact email
             contact_email = _safe_str(
                 row.get("Contact Email") or row.get("Contact email")
             )
+            contact_email2 = _safe_str(row.get("Contact Email2"))
             # Handle long description variations
             long_desc = _safe_str(
                 row.get("Long Description") or row.get("Long description3")
+                or row.get("Long description")
             )
+            row_sources = _safe_str(row.get("Sources"))
+            row_sources2 = _safe_str(row.get("Sources2"))
+            row_qc = _safe_str(row.get("QC"))
+            row_qc_date = _safe_str(row.get("QC Date"))
+            row_swc = _safe_str(row.get("Summary Word Count"))
+            row_extra = _safe_str(row.get("Column1"))
 
             if key not in companies:
                 companies[key] = {
@@ -219,6 +269,13 @@ def parse_xlsx() -> dict[str, dict]:
                     "contact_phone": _safe_str(row.get("Contact Phone")),
                     "naatbatt_member": 1 if _safe_str(row.get("NAATBatt Member", "")) == "Yes" else 0,
                     "naatbatt_id": _safe_str(row.get("ID")),
+                    "contact_email2": contact_email2,
+                    "sources": row_sources,
+                    "sources2": row_sources2,
+                    "qc": row_qc,
+                    "qc_date": row_qc_date,
+                    "summary_word_count": int(row_swc) if row_swc and row_swc.isdigit() else None,
+                    "extra_description": row_extra,
                     "company_focus": json.dumps([segment]),
                     "data_source": "naatbatt_xlsx",
                     "locations": [location],
@@ -255,6 +312,21 @@ def parse_xlsx() -> dict[str, dict]:
                 if not existing["hq_company"]:
                     existing["hq_company"] = _safe_str(row.get("HQ Company"))
                     existing["hq_company_website"] = _safe_str(row.get("HQ Company Website"))
+                # Aggregate sources — keep the longest/most complete value
+                if row_sources and (not existing["sources"] or len(row_sources) > len(existing["sources"])):
+                    existing["sources"] = row_sources
+                if row_sources2 and (not existing["sources2"] or len(row_sources2) > len(existing["sources2"])):
+                    existing["sources2"] = row_sources2
+                if row_qc and not existing["qc"]:
+                    existing["qc"] = row_qc
+                if row_qc_date and not existing["qc_date"]:
+                    existing["qc_date"] = row_qc_date
+                if not existing.get("contact_email2") and contact_email2:
+                    existing["contact_email2"] = contact_email2
+                if row_swc and row_swc.isdigit() and not existing.get("summary_word_count"):
+                    existing["summary_word_count"] = int(row_swc)
+                if row_extra and not existing.get("extra_description"):
+                    existing["extra_description"] = row_extra
 
     # Geocode companies missing lat/lng
     geocoded = 0
@@ -316,8 +388,11 @@ def import_naatbatt(db, force_download: bool = False) -> dict:
                 "company_hq_lat", "company_hq_lng", "company_locations",
                 "company_website", "hq_company", "hq_company_website",
                 "supply_chain_segment", "company_type", "company_status",
-                "summary", "long_description", "chemistries", "feedstock",
+                "summary", "long_description", "extra_description",
+                "chemistries", "feedstock",
                 "notes", "contact_name", "contact_email", "contact_phone",
+                "contact_email2", "sources", "sources2",
+                "qc", "qc_date", "summary_word_count",
                 "naatbatt_member", "naatbatt_id", "company_focus",
                 "last_updated",
             ]:

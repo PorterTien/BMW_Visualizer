@@ -2,9 +2,10 @@ import React, { useState, useEffect, useRef } from 'react'
 import { getCompanies } from '../api/client'
 
 const TYPES = [
-  'start-up', 'cell supplier', 'materials supplier', 'EV OEM',
-  'testing partner', 'prototyping partner', 'recycler', 'equipment supplier',
-  'R&D', 'services', 'modeling/software', 'other',
+  'Raw Materials', 'Battery Grade Materials', 'Other Battery Components & Mat.',
+  'Electrode & Cell Manufacturing', 'Module-Pack Manufacturing',
+  'Recycling-Repurposing', 'Equipment', 'R&D', 'Services & Consulting',
+  'Modeling & Software', 'Distributors', 'Professional Services',
 ]
 
 const STATUSES = [

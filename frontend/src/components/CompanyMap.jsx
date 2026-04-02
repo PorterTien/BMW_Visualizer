@@ -8,17 +8,18 @@ const LIGHT_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">Ope
 const DARK_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>'
 
 const TYPE_COLORS = {
-  'start-up': '#8B5CF6',
-  'cell supplier': '#4599FE',
-  'materials supplier': '#F59E0B',
-  'EV OEM': '#10B981',
-  'testing partner': '#EC4899',
-  'prototyping partner': '#F97316',
-  'recycler': '#6B7280',
-  'equipment supplier': '#06B6D4',
-  'R&D': '#3B82F6',
-  'services': '#84CC16',
-  'modeling/software': '#A855F7',
+  'Raw Materials': '#F59E0B',
+  'Battery Grade Materials': '#EAB308',
+  'Other Battery Components & Mat.': '#D97706',
+  'Electrode & Cell Manufacturing': '#4599FE',
+  'Module-Pack Manufacturing': '#2563EB',
+  'Recycling-Repurposing': '#10B981',
+  'Equipment': '#06B6D4',
+  'R&D': '#8B5CF6',
+  'Services & Consulting': '#84CC16',
+  'Modeling & Software': '#A855F7',
+  'Distributors': '#F97316',
+  'Professional Services': '#EC4899',
   'other': '#9CA3AF',
 }
 
@@ -69,7 +70,7 @@ export default function CompanyMap({ filters, onSelectCompany, highlightName, da
     if (filters.types.length && !filters.types.includes(c.company_type)) return false
     if (filters.statuses.length && !filters.statuses.includes(c.company_status)) return false
     if (filters.segments.length && !filters.segments.includes(c.supply_chain_segment)) return false
-    if (filters.countries.length && !filters.countries.some((co) => c.company_hq_country?.includes(co))) return false
+    if (filters.countries.length && !filters.countries.some((co) => c.facility_country?.includes(co) || c.company_hq_country?.includes(co))) return false
     return true
   }), [companies, filters])
 
@@ -97,45 +98,77 @@ export default function CompanyMap({ filters, onSelectCompany, highlightName, da
           attribution={darkMode ? DARK_ATTR : LIGHT_ATTR}
           url={darkMode ? DARK_TILES : LIGHT_TILES}
         />
-        {filtered.map((c) => {
+        {filtered.map((c, idx) => {
           const isHighlighted = highlightName && c.company_name === highlightName
+          const isHQ = c.is_hq
+          const baseColor = TYPE_COLORS[c.company_type] || '#9CA3AF'
           return (
+          <React.Fragment key={`${c.id}-${idx}`}>
+          {isHQ && (
+            <CircleMarker
+              center={[c.lat, c.lng]}
+              radius={isHighlighted ? 18 : 13}
+              pathOptions={{
+                color: isHighlighted ? '#EE0405' : baseColor,
+                fillColor: 'transparent',
+                fillOpacity: 0,
+                weight: 2,
+                dashArray: '4 4',
+              }}
+              interactive={false}
+            />
+          )}
           <CircleMarker
-            key={c.id}
             center={[c.lat, c.lng]}
-            radius={isHighlighted ? 12 : 7}
+            radius={isHighlighted ? 12 : isHQ ? 8 : 6}
             pathOptions={{
-              color: isHighlighted ? '#EE0405' : (TYPE_COLORS[c.company_type] || '#9CA3AF'),
-              fillColor: isHighlighted ? '#EE0405' : (TYPE_COLORS[c.company_type] || '#9CA3AF'),
-              fillOpacity: isHighlighted ? 1 : 0.8,
-              weight: isHighlighted ? 3 : 1.5,
+              color: isHighlighted ? '#EE0405' : baseColor,
+              fillColor: isHighlighted ? '#EE0405' : baseColor,
+              fillOpacity: isHighlighted ? 1 : isHQ ? 0.9 : 0.7,
+              weight: isHighlighted ? 3 : isHQ ? 2 : 1,
             }}
           >
             <Popup>
-              <div className="min-w-[180px]">
+              <div className="min-w-[200px]">
                 <div className="font-bold text-[#031E49] text-sm mb-1">{c.company_name}</div>
+                {c.facility_name && (
+                  <div className="text-xs text-[#4599FE] font-medium mb-1">{c.facility_name}</div>
+                )}
                 <div className="text-xs text-gray-600 space-y-0.5">
                   <div>
+                    <span className="font-medium">{isHQ ? 'HQ' : 'Facility'}:</span>{' '}
+                    {[c.facility_city, c.facility_state, c.facility_country].filter(Boolean).join(', ') || '—'}
+                  </div>
+                  <div>
                     <span className="font-medium">Type:</span>{' '}
-                    <span style={{ color: TYPE_COLORS[c.company_type] }}>
+                    <span style={{ color: baseColor }}>
                       {c.company_type || 'Unknown'}
                     </span>
                   </div>
                   <div>
-                    <span className="font-medium">Status:</span> {c.company_status || '—'}
+                    <span className="font-medium">Segment:</span> {c.supply_chain_segment || '—'}
                   </div>
                   <div>
-                    <span className="font-medium">HQ:</span>{' '}
-                    {[c.company_hq_city, c.company_hq_state].filter(Boolean).join(', ') || '—'}
+                    <span className="font-medium">Status:</span> {c.status || c.company_status || '—'}
                   </div>
+                  {c.product && (
+                    <div><span className="font-medium">Product:</span> {c.product}</div>
+                  )}
+                  {c.product_type && (
+                    <div><span className="font-medium">Product Type:</span> {c.product_type}</div>
+                  )}
+                  {c.capacity && (
+                    <div><span className="font-medium">Capacity:</span> {c.capacity}{c.capacity_units ? ` ${c.capacity_units}` : ''}</div>
+                  )}
+                  {c.workforce && (
+                    <div><span className="font-medium">Workforce:</span> {c.workforce}</div>
+                  )}
+                  {c.chemistries && (
+                    <div><span className="font-medium">Chemistries:</span> {c.chemistries}</div>
+                  )}
                   {c.company_website && (
                     <div>
-                      <a
-                        href={c.company_website}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-[#4599FE] hover:underline"
-                      >
+                      <a href={c.company_website} target="_blank" rel="noreferrer" className="text-[#4599FE] hover:underline">
                         Website
                       </a>
                     </div>
@@ -145,17 +178,18 @@ export default function CompanyMap({ filters, onSelectCompany, highlightName, da
                   onClick={() => onSelectCompany(c.id)}
                   className="mt-2 w-full bg-[#4599FE] text-white text-xs py-1 rounded hover:bg-[#4599FE]"
                 >
-                  Details
+                  Company Details
                 </button>
               </div>
             </Popup>
           </CircleMarker>
+          </React.Fragment>
           )
         })}
       </MapContainer>
       <Legend />
       <div className="absolute top-3 left-14 z-[1000] bg-white rounded shadow px-3 py-1.5 text-xs text-gray-600 border border-[#B8CAD1]">
-        Showing <strong>{filtered.length}</strong> of <strong>{companies.length}</strong> companies
+        Showing <strong>{filtered.length}</strong> of <strong>{companies.length}</strong> locations
       </div>
     </div>
   )

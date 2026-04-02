@@ -13,7 +13,13 @@
       "Bash(node:*)",
       "Bash(python:*)",
       "Bash(npx vite:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(cp \"/Users/portertien/Downloads/lithiumionbatterygigafactorydatabase_automotivefromultimamedia_updatedjuly21st2022_206355\\(1\\).xlsx\" /Users/portertien/Projects/BMW_data_visualizer/data/gigafactory_db.xlsx)",
+      "Bash(cp \"/Users/portertien/Downloads/bbd-data.xlsx\" /Users/portertien/Projects/BMW_data_visualizer/data/bbd_data.xlsx)",
+      "WebFetch(domain:www.sec.gov)",
+      "WebSearch",
+      "WebFetch(domain:data.sec.gov)",
+      "Bash(wc -l /Users/portertien/Projects/BMW_data_visualizer/backend/*.py /Users/portertien/Projects/BMW_data_visualizer/backend/routes/*.py /Users/portertien/Projects/BMW_data_visualizer/frontend/src/*.jsx /Users/portertien/Projects/BMW_data_visualizer/frontend/src/components/*.jsx /Users/portertien/Projects/BMW_data_visualizer/frontend/src/api/*.js)"
     ]
   }
 }
