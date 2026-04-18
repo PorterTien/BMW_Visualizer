@@ -2,13 +2,17 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
 from backend.config import DATABASE_URL
 
-# Only use check_same_thread for SQLite, not PostgreSQL
+_db_url = DATABASE_URL
+if _db_url.startswith("postgresql://") or _db_url.startswith("postgresql+psycopg2://"):
+    _db_url = _db_url.replace("postgresql+psycopg2://", "postgresql+psycopg://", 1)
+    _db_url = _db_url.replace("postgresql://", "postgresql+psycopg://", 1)
+
 connect_args = {}
-if DATABASE_URL.startswith("sqlite"):
+if _db_url.startswith("sqlite"):
     connect_args = {"check_same_thread": False}
 
 engine = create_engine(
-    DATABASE_URL,
+    _db_url,
     connect_args=connect_args,
     echo=False,
 )
@@ -55,6 +59,7 @@ def migrate_db():
         ("description", "TEXT"),
         ("founding_year", "INTEGER"),
         ("logo_url", "TEXT"),
+        ("manual_overrides", "TEXT"),
     ]
     with engine.connect() as conn:
         existing = {row[1] for row in conn.execute(text("PRAGMA table_info(companies)"))}

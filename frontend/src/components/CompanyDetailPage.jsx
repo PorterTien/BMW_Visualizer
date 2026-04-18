@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react'
-import { getCompanyDetail, researchCompany, getJob, chatWithCompany } from '../api/client'
+import { getCompanyDetail, researchCompany, getJob, chatWithCompany, updateCompany } from '../api/client'
 
 /* ── Logo helper ── */
 function nameColor(name) {
@@ -90,6 +90,13 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany, d
   const [chatInput, setChatInput] = useState('')
   const [chatLoading, setChatLoading] = useState(false)
   const [selectedPartnership, setSelectedPartnership] = useState(null)
+  const [editMode, setEditMode] = useState(false)
+  const [editValues, setEditValues] = useState({})
+  const [saving, setSaving] = useState(false)
+  const [saveMsg, setSaveMsg] = useState(null)
+  const [notesValue, setNotesValue] = useState('')
+  const [notesSaving, setNotesSaving] = useState(false)
+  const [notesSaved, setNotesSaved] = useState(false)
   const chatBottomRef = useRef(null)
   const pollRef = useRef(null)
 
@@ -104,8 +111,14 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany, d
     setChatMessages([])
     setSelectedPartnership(null)
     setActiveSection('overview')
+    setEditMode(false)
+    setEditValues({})
+    setSaveMsg(null)
     getCompanyDetail(companyId)
-      .then(({ data }) => setCompany(data))
+      .then(({ data }) => {
+        setCompany(data)
+        setNotesValue(data.notes || '')
+      })
       .catch(console.error)
       .finally(() => setLoading(false))
   }, [companyId])
@@ -156,6 +169,44 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany, d
       setChatMessages(prev => [...prev, { role: 'assistant', text: 'Error getting response.' }])
     }
     setChatLoading(false)
+  }
+
+  function startEdit() {
+    setEditValues({
+      company_website: company.company_website || '',
+      crunchbase_url: company.crunchbase_url || '',
+      linkedin_url: company.linkedin_url || '',
+      pitchbook_url: company.pitchbook_url || '',
+    })
+    setEditMode(true)
+    setSaveMsg(null)
+  }
+
+  async function handleSaveEdits() {
+    setSaving(true)
+    setSaveMsg(null)
+    try {
+      const { data: updated } = await updateCompany(company.id, editValues)
+      setCompany(prev => ({ ...prev, ...updated }))
+      setEditMode(false)
+      setSaveMsg('Saved')
+      setTimeout(() => setSaveMsg(null), 3000)
+    } catch {
+      setSaveMsg('Save failed')
+    }
+    setSaving(false)
+  }
+
+  async function handleSaveNotes() {
+    setNotesSaving(true)
+    setNotesSaved(false)
+    try {
+      await updateCompany(company.id, { notes: notesValue })
+      setCompany(prev => ({ ...prev, notes: notesValue }))
+      setNotesSaved(true)
+      setTimeout(() => setNotesSaved(false), 3000)
+    } catch {}
+    setNotesSaving(false)
   }
 
   // Merge partnerships from new table + legacy
@@ -274,6 +325,41 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany, d
           {/* OVERVIEW */}
           {activeSection === 'overview' && (
             <div className="space-y-6">
+              {/* Edit toolbar */}
+              <div className="flex items-center justify-between">
+                <span />
+                <div className="flex items-center gap-2">
+                  {saveMsg && <span className={`text-xs ${saveMsg === 'Saved' ? 'text-green-600' : 'text-red-500'}`}>{saveMsg}</span>}
+                  {editMode ? (
+                    <>
+                      <button
+                        onClick={() => setEditMode(false)}
+                        className="text-xs px-3 py-1.5 border border-bmw-border rounded text-gray-500 hover:bg-bmw-gray-light transition-colors"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={handleSaveEdits}
+                        disabled={saving}
+                        className="text-xs px-3 py-1.5 bg-bmw-blue text-white rounded hover:bg-[#3a88ee] disabled:opacity-60 transition-colors"
+                      >
+                        {saving ? 'Saving...' : 'Save changes'}
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={startEdit}
+                      className="text-xs px-3 py-1.5 border border-bmw-border rounded text-gray-500 hover:bg-bmw-gray-light transition-colors flex items-center gap-1.5"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125" />
+                      </svg>
+                      Edit
+                    </button>
+                  )}
+                </div>
+              </div>
+
               {/* Stats grid */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <InfoCard label="HQ" value={[company.company_hq_city, company.company_hq_state, company.company_hq_country].filter(Boolean).join(', ')} />
@@ -299,20 +385,50 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany, d
               </div>
 
               {/* Links */}
-              <div className="flex flex-wrap gap-3">
-                {company.company_website && (
-                  <ExtLink label="Website" url={company.company_website} />
-                )}
-                {company.crunchbase_url && (
-                  <ExtLink label="Crunchbase" url={company.crunchbase_url} />
-                )}
-                {company.linkedin_url && (
-                  <ExtLink label="LinkedIn" url={company.linkedin_url} />
-                )}
-                {company.pitchbook_url && (
-                  <ExtLink label="PitchBook" url={company.pitchbook_url} />
-                )}
-              </div>
+              {editMode ? (
+                <div className="bg-bmw-gray-light border border-bmw-border rounded-lg p-4 space-y-3">
+                  <div className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-1">Edit Links</div>
+                  {[
+                    { key: 'company_website', label: 'Website' },
+                    { key: 'crunchbase_url', label: 'Crunchbase' },
+                    { key: 'linkedin_url', label: 'LinkedIn' },
+                    { key: 'pitchbook_url', label: 'PitchBook' },
+                  ].map(({ key, label }) => (
+                    <div key={key} className="flex items-center gap-2">
+                      <label className="text-xs text-gray-500 w-24 shrink-0">{label}</label>
+                      <input
+                        type="url"
+                        value={editValues[key] || ''}
+                        onChange={e => setEditValues(prev => ({ ...prev, [key]: e.target.value }))}
+                        placeholder={`https://...`}
+                        className="flex-1 border border-bmw-border rounded px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-bmw-blue"
+                      />
+                      {company.manual_overrides?.includes(key) && (
+                        <span className="text-[10px] text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded shrink-0">locked</span>
+                      )}
+                    </div>
+                  ))}
+                  <p className="text-[11px] text-gray-400">Saved links won't be overwritten when you re-research this company.</p>
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-3">
+                  {company.company_website && (
+                    <ExtLink label="Website" url={company.company_website} locked={company.manual_overrides?.includes('company_website')} />
+                  )}
+                  {company.crunchbase_url && (
+                    <ExtLink label="Crunchbase" url={company.crunchbase_url} locked={company.manual_overrides?.includes('crunchbase_url')} />
+                  )}
+                  {company.linkedin_url && (
+                    <ExtLink label="LinkedIn" url={company.linkedin_url} locked={company.manual_overrides?.includes('linkedin_url')} />
+                  )}
+                  {company.pitchbook_url && (
+                    <ExtLink label="PitchBook" url={company.pitchbook_url} locked={company.manual_overrides?.includes('pitchbook_url')} />
+                  )}
+                  {!company.company_website && !company.crunchbase_url && !company.linkedin_url && !company.pitchbook_url && (
+                    <button onClick={startEdit} className="text-xs text-gray-400 hover:text-bmw-blue transition-colors">+ Add links</button>
+                  )}
+                </div>
+              )}
 
               {/* Summary */}
               {company.summary && (
@@ -406,12 +522,26 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany, d
                 </Section>
               )}
 
-              {/* Notes */}
-              {company.notes && (
-                <Section title="Notes">
-                  <p className="text-sm text-gray-600 leading-relaxed">{company.notes}</p>
-                </Section>
-              )}
+              {/* Notes — always editable */}
+              <Section title="Notes">
+                <textarea
+                  value={notesValue}
+                  onChange={e => { setNotesValue(e.target.value); setNotesSaved(false) }}
+                  placeholder="Add notes about this company..."
+                  rows={4}
+                  className="w-full border border-bmw-border rounded-lg px-3 py-2.5 text-sm text-gray-700 leading-relaxed focus:outline-none focus:ring-2 focus:ring-bmw-blue resize-y"
+                />
+                <div className="flex items-center gap-2 mt-1.5">
+                  <button
+                    onClick={handleSaveNotes}
+                    disabled={notesSaving}
+                    className="text-xs px-3 py-1 bg-bmw-blue text-white rounded hover:bg-[#3a88ee] disabled:opacity-60 transition-colors"
+                  >
+                    {notesSaving ? 'Saving...' : 'Save notes'}
+                  </button>
+                  {notesSaved && <span className="text-xs text-green-600">Saved</span>}
+                </div>
+              </Section>
 
               {/* Metrics from metrics table */}
               {company.metrics?.length > 0 && (
@@ -736,7 +866,7 @@ function Section({ title, children }) {
   )
 }
 
-function ExtLink({ label, url }) {
+function ExtLink({ label, url, locked }) {
   return (
     <a
       href={url}
@@ -744,6 +874,11 @@ function ExtLink({ label, url }) {
       rel="noreferrer"
       className="inline-flex items-center gap-1.5 text-xs text-bmw-blue hover:underline bg-blue-50 px-3 py-1.5 rounded-full"
     >
+      {locked && (
+        <svg className="w-3 h-3 text-amber-500" fill="currentColor" viewBox="0 0 20 20">
+          <path fillRule="evenodd" d="M10 1a4.5 4.5 0 00-4.5 4.5V9H5a2 2 0 00-2 2v6a2 2 0 002 2h10a2 2 0 002-2v-6a2 2 0 00-2-2h-.5V5.5A4.5 4.5 0 0010 1zm3 8V5.5a3 3 0 10-6 0V9h6z" clipRule="evenodd" />
+        </svg>
+      )}
       {label}
       <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
         <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />

@@ -66,6 +66,7 @@ class Company(Base):
     plant_start_date = Column(Text)       # earliest plant start date
     last_updated = Column(Text)
     data_source = Column(Text)
+    manual_overrides = Column(Text)          # JSON list of field names manually set by user
 
 
 Index("ix_company_name", Company.company_name)

@@ -74,6 +74,7 @@ def _company_dict(c: Company) -> dict:
         "plant_start_date": c.plant_start_date,
         "last_updated": c.last_updated,
         "data_source": c.data_source,
+        "manual_overrides": json.loads(c.manual_overrides or "[]"),
     }
 
 
@@ -436,6 +437,42 @@ def get_company(company_id: int, db: Session = Depends(get_db)):
     return data
 
 
+_EDITABLE_FIELDS = {
+    "company_website", "crunchbase_url", "linkedin_url", "pitchbook_url",
+    "notes", "summary", "long_description", "contact_name", "contact_email",
+    "contact_phone", "company_hq_city", "company_hq_state", "company_hq_country",
+    "industry_segment", "company_type", "company_status", "chemistries",
+    "founding_year", "number_of_employees", "hq_company", "hq_company_website",
+    "feedstock", "description",
+}
+
+
+class CompanyUpdateRequest(BaseModel):
+    updates: dict
+    mark_as_manual: bool = True
+
+
+@router.put("/{company_id}")
+def update_company(company_id: int, req: CompanyUpdateRequest, db: Session = Depends(get_db)):
+    c = db.query(Company).filter(Company.id == company_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Company not found")
+
+    overrides = set(json.loads(c.manual_overrides or "[]"))
+    for field, val in req.updates.items():
+        if field not in _EDITABLE_FIELDS:
+            continue
+        setattr(c, field, val)
+        if req.mark_as_manual:
+            overrides.add(field)
+
+    c.manual_overrides = json.dumps(sorted(overrides))
+    c.last_updated = datetime.now(timezone.utc).isoformat()
+    db.commit()
+    db.refresh(c)
+    return _company_dict(c)
+
+
 @router.post("/enrich/sec-edgar")
 def enrich_sec_edgar(db: Session = Depends(get_db)):
     """Trigger SEC EDGAR enrichment for all companies."""
@@ -507,8 +544,9 @@ async def research_company_endpoint(req: ResearchRequest, db: Session = Depends(
             ).first()
             ts = datetime.now(timezone.utc).isoformat()
             if existing:
+                overrides = set(json.loads(existing.manual_overrides or "[]"))
                 for field, val in result.items():
-                    if val is not None and field not in ("company_name", "error"):
+                    if val is not None and field not in ("company_name", "error") and field not in overrides:
                         if isinstance(val, (list, dict)):
                             val = json.dumps(val)
                         setattr(existing, field, val)
@@ -852,8 +890,9 @@ async def bulk_research(req: BulkResearchRequest, db: Session = Depends(get_db))
 
                 company = inner_db.query(Company).filter(Company.company_name.ilike(company_name)).first()
                 if company:
+                    overrides = set(json.loads(company.manual_overrides or "[]"))
                     for field, val in result.items():
-                        if val is not None and field not in ("company_name", "error"):
+                        if val is not None and field not in ("company_name", "error") and field not in overrides:
                             setattr(company, field, json.dumps(val) if isinstance(val, (list, dict)) else val)
                     company.last_updated = ts
                     company.data_source = "ai_research"

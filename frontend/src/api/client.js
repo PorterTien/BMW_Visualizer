@@ -18,6 +18,8 @@ export const discoverCompanies = (segment, count = 10, custom_query = '') =>
   api.post('/companies/discover', { segment, count, custom_query })
 export const bulkResearch = (company_names) =>
   api.post('/companies/bulk-research', { company_names })
+export const updateCompany = (id, updates, mark_as_manual = true) =>
+  api.put(`/companies/${id}`, { updates, mark_as_manual })
 
 // Partnerships
 export const getPartnerships = (params) => api.get('/partnerships', { params })
