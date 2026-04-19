@@ -5,7 +5,6 @@ const TABS = [
   { id: 'map', label: 'Company Map' },
   { id: 'table', label: 'Company Table' },
   { id: 'watchlist', label: 'Watchlist' },
-  { id: 'news', label: 'News Feed' },
   { id: 'network', label: 'Partnership Network' },
 ]
 

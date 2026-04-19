@@ -346,7 +346,10 @@ export default function WatchlistPanel() {
 
   const selectedDigest = selectedId ? digestMap[selectedId] : null
   const selectedCompany = watchlist.find((w) => w.company_id === selectedId)
-  const selectedArticles = selectedDigest?.articles || []
+  const selectedArticles = [...(selectedDigest?.articles || [])].sort((a, b) => {
+    if (a.is_breaking !== b.is_breaking) return a.is_breaking ? -1 : 1
+    return (b.importance || 0) - (a.importance || 0)
+  })
 
   if (loading) {
     return <div className="flex items-center justify-center h-full text-gray-400 text-sm">Loading watchlist…</div>

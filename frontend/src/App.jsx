@@ -3,7 +3,6 @@ import Navbar from './components/Navbar'
 import Sidebar from './components/Sidebar'
 import CompanyMap from './components/CompanyMap'
 import CompanyTable from './components/CompanyTable'
-import NewsFeed from './components/NewsFeed'
 import PartnershipNetwork from './components/PartnershipNetwork'
 import ResearchPanel from './components/ResearchPanel'
 import WatchlistPanel from './components/WatchlistPanel'
@@ -129,8 +128,7 @@ export default function App() {
             <CompanyTable filters={filters} onOpenCompany={handleOpenCompanyPage} />
           )}
           {activeTab === 'watchlist' && <WatchlistPanel />}
-          {activeTab === 'news' && <NewsFeed />}
-          {activeTab === 'network' && (
+{activeTab === 'network' && (
             <PartnershipNetwork onSelectCompany={handleOpenCompanyPage} />
           )}
         </main>
