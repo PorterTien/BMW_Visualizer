@@ -20,6 +20,11 @@ from backend.scheduler import get_next_run_time, start_scheduler, stop_scheduler
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
 log = logging.getLogger(__name__)
 
+
+def _log_task_error(task: asyncio.Task) -> None:
+    if not task.cancelled() and task.exception():
+        log.error("Background task %s raised an exception: %s", task.get_name(), task.exception())
+
 app = FastAPI(title="BMW Battery Intelligence API", version="1.0.0")
 
 _default_cors = "http://localhost:5173,http://127.0.0.1:5173"
@@ -58,7 +63,8 @@ async def startup():
         count = db.query(Company).count()
         if count == 0:
             log.info("DB is empty — auto-triggering NAATBatt seed in background.")
-            asyncio.create_task(_auto_seed())
+            t = asyncio.create_task(_auto_seed())
+            t.add_done_callback(_log_task_error)
     finally:
         db.close()
 
@@ -106,14 +112,16 @@ def sync_status(db: Session = Depends(get_db)):
 
 @app.post("/api/sync/naatbatt")
 def trigger_naatbatt_sync():
-    asyncio.create_task(_run_seed(True))
+    t = asyncio.create_task(_run_seed(True))
+    t.add_done_callback(_log_task_error)
     return {"status": "sync_started"}
 
 
 # Seed endpoints
 @app.post("/api/seed")
 def trigger_seed():
-    asyncio.create_task(_run_seed(False))
+    t = asyncio.create_task(_run_seed(False))
+    t.add_done_callback(_log_task_error)
     return {"status": "seed_started"}
 
 

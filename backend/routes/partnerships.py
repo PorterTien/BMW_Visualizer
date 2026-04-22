@@ -6,11 +6,12 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from backend.database import get_db, SessionLocal
+from backend.rate_limit import check_rate_limit
 from backend.models import (
     Company,
     CompanyMetric,
@@ -21,6 +22,11 @@ from backend.models import (
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["partnerships"])
+
+
+def _log_task_error(task: asyncio.Task) -> None:
+    if not task.cancelled() and task.exception():
+        log.error("Background task %s raised: %s", task.get_name(), task.exception())
 
 
 # ── Pydantic schemas ─────────────────────��──────────────────────────────────
@@ -50,15 +56,18 @@ class PartnershipCreate(BaseModel):
 
 # ── Helpers ────────────────────────────────────────────────────��────────────
 
-def _partnership_dict(p: Partnership, db: Session) -> dict:
-    members = []
-    for m in p.members:
-        company = db.query(Company).filter(Company.id == m.company_id).first()
-        members.append({
+def _partnership_dict(p: Partnership, db: Session, company_map: dict[int, Company] | None = None) -> dict:
+    if company_map is None:
+        ids = [m.company_id for m in p.members]
+        company_map = {c.id: c for c in db.query(Company).filter(Company.id.in_(ids)).all()} if ids else {}
+    members = [
+        {
             "company_id": m.company_id,
-            "company_name": company.company_name if company else "Unknown",
+            "company_name": company_map[m.company_id].company_name if m.company_id in company_map else "Unknown",
             "role": m.role,
-        })
+        }
+        for m in p.members
+    ]
     return {
         "id": p.id,
         "partnership_name": p.partnership_name,
@@ -109,7 +118,9 @@ def list_partnerships(
     if company_id:
         q = q.join(PartnershipMember).filter(PartnershipMember.company_id == company_id)
     partnerships = q.order_by(Partnership.date_announced.desc()).all()
-    return [_partnership_dict(p, db) for p in partnerships]
+    all_member_ids = {m.company_id for p in partnerships for m in p.members}
+    company_map = {c.id: c for c in db.query(Company).filter(Company.id.in_(all_member_ids)).all()} if all_member_ids else {}
+    return [_partnership_dict(p, db, company_map) for p in partnerships]
 
 
 # NOTE: /graph must be defined BEFORE /{partnership_id} to avoid "graph" being matched as an ID
@@ -120,15 +131,16 @@ def partnership_graph(db: Session = Depends(get_db)):
 
 
 @router.post("/partnerships/enrich")
-async def enrich_network(db: Session = Depends(get_db)):
+async def enrich_network(request: Request, db: Session = Depends(get_db)):
     """Background job: AI-classify all unclassified company types and partnership types."""
+    check_rate_limit(request, max_calls=3, window_secs=60)
     ts = datetime.now(timezone.utc).isoformat()
     job = ResearchJob(job_type="network_enrich", status="pending", target="network", created_at=ts, updated_at=ts)
     db.add(job)
     db.commit()
     db.refresh(job)
     job_id = job.id
-    asyncio.create_task(_enrich_network_bg(job_id, ts))
+    asyncio.create_task(_enrich_network_bg(job_id, ts)).add_done_callback(_log_task_error)
     return {"job_id": job_id}
 
 

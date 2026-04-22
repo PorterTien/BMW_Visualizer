@@ -5,7 +5,7 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import cast, case, func
 from sqlalchemy.dialects.postgresql import JSON as PGJSON
@@ -13,9 +13,25 @@ from sqlalchemy.orm import Session, load_only
 
 from backend.database import get_db
 from backend.models import Company, CompanyFacility, CompanyMetric, NewsHeadline, Partnership, PartnershipMember, ResearchJob
+from backend.rate_limit import check_rate_limit
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/companies", tags=["companies"])
+
+
+def _log_task_error(task: asyncio.Task) -> None:
+    if not task.cancelled() and task.exception():
+        log.error("Background task %s raised: %s", task.get_name(), task.exception())
+
+
+def _safe_json(val: str | None, default):
+    """Parse JSON stored in a DB column; return default on missing or corrupt data."""
+    if not val:
+        return default
+    try:
+        return json.loads(val)
+    except (json.JSONDecodeError, TypeError):
+        return default
 
 
 def _company_dict(c: Company) -> dict:
@@ -27,13 +43,13 @@ def _company_dict(c: Company) -> dict:
         "company_hq_country": c.company_hq_country,
         "company_hq_lat": c.company_hq_lat,
         "company_hq_lng": c.company_hq_lng,
-        "company_locations": json.loads(c.company_locations or "[]"),
+        "company_locations": _safe_json(c.company_locations, []),
         "company_type": c.company_type,
         "company_status": c.company_status,
-        "company_focus": json.loads(c.company_focus or "[]"),
+        "company_focus": _safe_json(c.company_focus, []),
         "supply_chain_segment": c.supply_chain_segment,
-        "keywords": json.loads(c.keywords or "[]"),
-        "announced_partners": json.loads(c.announced_partners or "[]"),
+        "keywords": _safe_json(c.keywords, []),
+        "announced_partners": _safe_json(c.announced_partners, []),
         "number_of_employees": c.number_of_employees,
         "market_cap_usd": c.market_cap_usd,
         "revenue_usd": c.revenue_usd,
@@ -68,13 +84,13 @@ def _company_dict(c: Company) -> dict:
         "volta_verified": bool(c.volta_verified),
         "products": c.products,
         "product_services_desc": c.product_services_desc,
-        "battery_chemistry_flags": json.loads(c.battery_chemistry_flags or "{}"),
-        "supply_chain_flags": json.loads(c.supply_chain_flags or "{}"),
-        "gwh_capacity": json.loads(c.gwh_capacity or "{}"),
+        "battery_chemistry_flags": _safe_json(c.battery_chemistry_flags, {}),
+        "supply_chain_flags": _safe_json(c.supply_chain_flags, {}),
+        "gwh_capacity": _safe_json(c.gwh_capacity, {}),
         "plant_start_date": c.plant_start_date,
         "last_updated": c.last_updated,
         "data_source": c.data_source,
-        "manual_overrides": json.loads(c.manual_overrides or "[]"),
+        "manual_overrides": _safe_json(c.manual_overrides, []),
     }
 
 
@@ -190,9 +206,9 @@ def _company_dict_list(c: Company, partner_count: int) -> dict:
         "company_locations": [],
         "company_type": c.company_type,
         "company_status": c.company_status,
-        "company_focus": json.loads(c.company_focus or "[]"),
+        "company_focus": _safe_json(c.company_focus, []),
         "supply_chain_segment": c.supply_chain_segment,
-        "keywords": json.loads(c.keywords or "[]"),
+        "keywords": _safe_json(c.keywords, []),
         "announced_partners": [],
         "announced_partners_count": partner_count,
         "number_of_employees": c.number_of_employees,
@@ -231,7 +247,7 @@ def _company_dict_list(c: Company, partner_count: int) -> dict:
         "product_services_desc": None,
         "battery_chemistry_flags": {},
         "supply_chain_flags": {},
-        "gwh_capacity": json.loads(c.gwh_capacity or "{}"),
+        "gwh_capacity": _safe_json(c.gwh_capacity, {}),
         "plant_start_date": c.plant_start_date,
         "last_updated": c.last_updated,
         "data_source": c.data_source,
@@ -278,7 +294,7 @@ def companies_map(db: Session = Depends(get_db)):
     )
     results = []
     for c in companies:
-        locations = json.loads(c.company_locations or "[]")
+        locations = _safe_json(c.company_locations, [])
         # Emit one marker per facility that has coordinates
         for loc in locations:
             lat = loc.get("lat")
@@ -371,7 +387,7 @@ def companies_network(db: Session = Depends(get_db)):
 
     # Build links; create virtual nodes for external partners not in DB
     for c in companies:
-        partners = json.loads(c.announced_partners or "[]")
+        partners = _safe_json(c.announced_partners, [])
         for p in partners:
             partner_name = (p.get("partner_name") or "").strip()
             if not partner_name:
@@ -529,7 +545,7 @@ def _find_similar(company: Company, db: Session, limit: int = 8) -> list[dict]:
             my_partner_ids.add(s.company_id)
 
     legacy_partners: set[str] = set()
-    for p in json.loads(company.announced_partners or "[]"):
+    for p in _safe_json(company.announced_partners, []):
         pn = (p.get("partner_name") or "").strip().lower()
         if pn:
             legacy_partners.add(pn)
@@ -550,7 +566,7 @@ def _find_similar(company: Company, db: Session, limit: int = 8) -> list[dict]:
         shared = len(my_partner_ids & c_partner_ids) if my_partner_ids else 0
 
         c_legacy: set[str] = set()
-        for p in json.loads(c.announced_partners or "[]"):
+        for p in _safe_json(c.announced_partners, []):
             pn = (p.get("partner_name") or "").strip().lower()
             if pn:
                 c_legacy.add(pn)
@@ -591,7 +607,7 @@ def company_detail(company_id: int, db: Session = Depends(get_db)):
         CompanyFacility.company_id == company_id
     ).all()
     if not facilities:
-        legacy_locs = json.loads(c.company_locations or "[]")
+        legacy_locs = _safe_json(c.company_locations, [])
         data["facilities"] = [{
             "id": None,
             "facility_name": loc.get("facility_name"),
@@ -635,7 +651,7 @@ def company_detail(company_id: int, db: Session = Depends(get_db)):
         data["partnerships"] = []
 
     if not data["partnerships"] and c.announced_partners:
-        data["partnerships_legacy"] = json.loads(c.announced_partners or "[]")
+        data["partnerships_legacy"] = _safe_json(c.announced_partners, [])
     else:
         data["partnerships_legacy"] = []
 
@@ -649,8 +665,8 @@ def company_detail(company_id: int, db: Session = Depends(get_db)):
             "news_source": n.news_source,
             "url": n.url,
             "summary": n.summary,
-            "partners": json.loads(n.partners or "[]"),
-            "topics": json.loads(n.topics or "[]"),
+            "partners": _safe_json(n.partners, []),
+            "topics": _safe_json(n.topics, []),
         }
         for n in db.query(NewsHeadline)
         .filter(NewsHeadline.company_id == company_id)
@@ -673,7 +689,7 @@ def company_detail(company_id: int, db: Session = Depends(get_db)):
         for m in db.query(CompanyMetric).filter(CompanyMetric.company_id == company_id).all()
     ]
 
-    data["gwh_capacity"] = json.loads(c.gwh_capacity or "{}")
+    data["gwh_capacity"] = _safe_json(c.gwh_capacity, {})
 
     # Citations
     citations: list[dict] = []
@@ -722,7 +738,7 @@ def list_facilities(company_id: int, db: Session = Depends(get_db)):
         c = db.query(Company).filter(Company.id == company_id).first()
         if not c:
             raise HTTPException(status_code=404, detail="Company not found")
-        locs = json.loads(c.company_locations or "[]")
+        locs = _safe_json(c.company_locations, [])
         return [{"id": None, "company_id": company_id, **loc} for loc in locs]
     return [_facility_dict(f) for f in facilities]
 
@@ -767,7 +783,7 @@ def update_company(company_id: int, req: CompanyUpdateRequest, db: Session = Dep
     if not c:
         raise HTTPException(status_code=404, detail="Company not found")
 
-    overrides = set(json.loads(c.manual_overrides or "[]"))
+    overrides = set(_safe_json(c.manual_overrides, []))
     for field, val in req.updates.items():
         if field not in _EDITABLE_FIELDS:
             continue
@@ -814,7 +830,8 @@ class CompanyChatRequest(BaseModel):
 
 
 @router.post("/research")
-async def research_company_endpoint(req: ResearchRequest, db: Session = Depends(get_db)):
+async def research_company_endpoint(req: ResearchRequest, request: Request, db: Session = Depends(get_db)):
+    check_rate_limit(request, max_calls=10, window_secs=60)
     now = datetime.now(timezone.utc).isoformat()
     job = ResearchJob(
         job_type="company_research",
@@ -853,7 +870,7 @@ async def research_company_endpoint(req: ResearchRequest, db: Session = Depends(
             ).first()
             ts = datetime.now(timezone.utc).isoformat()
             if existing:
-                overrides = set(json.loads(existing.manual_overrides or "[]"))
+                overrides = set(_safe_json(existing.manual_overrides, []))
                 for field, val in result.items():
                     if val is not None and field not in ("company_name", "error") and field not in overrides:
                         if isinstance(val, (list, dict)):
@@ -920,7 +937,7 @@ async def research_company_endpoint(req: ResearchRequest, db: Session = Depends(
         finally:
             inner_db.close()
 
-    asyncio.create_task(_run())
+    asyncio.create_task(_run()).add_done_callback(_log_task_error)
     return {"job_id": job_id}
 
 
@@ -977,8 +994,9 @@ def _create_ai_partnership(db, company: Company, pdata: dict, ts: str):
 
 
 @router.post("/search/custom")
-async def custom_search(req: CustomSearchRequest, db: Session = Depends(get_db)):
+async def custom_search(req: CustomSearchRequest, request: Request, db: Session = Depends(get_db)):
     """Run a free-form Gemini search and return raw results + Claude summary."""
+    check_rate_limit(request, max_calls=10, window_secs=60)
     now = datetime.now(timezone.utc).isoformat()
     job = ResearchJob(
         job_type="custom_search",
@@ -1042,12 +1060,13 @@ async def custom_search(req: CustomSearchRequest, db: Session = Depends(get_db))
         finally:
             inner_db.close()
 
-    asyncio.create_task(_run())
+    asyncio.create_task(_run()).add_done_callback(_log_task_error)
     return {"job_id": job_id}
 
 
 @router.post("/discover")
-async def discover_companies_endpoint(req: DiscoverRequest, db: Session = Depends(get_db)):
+async def discover_companies_endpoint(req: DiscoverRequest, request: Request, db: Session = Depends(get_db)):
+    check_rate_limit(request, max_calls=5, window_secs=60)
     now = datetime.now(timezone.utc).isoformat()
     job = ResearchJob(
         job_type="discover_companies",
@@ -1096,13 +1115,14 @@ async def discover_companies_endpoint(req: DiscoverRequest, db: Session = Depend
         finally:
             inner_db.close()
 
-    asyncio.create_task(_run())
+    asyncio.create_task(_run()).add_done_callback(_log_task_error)
     return {"job_id": job_id}
 
 
 @router.post("/{company_id}/chat")
-async def chat_with_company(company_id: int, req: CompanyChatRequest, db: Session = Depends(get_db)):
+async def chat_with_company(company_id: int, req: CompanyChatRequest, request: Request, db: Session = Depends(get_db)):
     """Answer a specific question about a company using its stored data + live web search."""
+    check_rate_limit(request, max_calls=20, window_secs=60)
     c = db.query(Company).filter(Company.id == company_id).first()
     if not c:
         raise HTTPException(status_code=404, detail="Company not found")
@@ -1115,9 +1135,9 @@ Type: {c.company_type or 'N/A'} | Status: {c.company_status or 'N/A'}
 HQ: {', '.join(filter(None, [c.company_hq_city, c.company_hq_state, c.company_hq_country]))}
 Segment: {c.supply_chain_segment or 'N/A'}
 Employees: {c.number_of_employees or 'N/A'}
-Keywords: {', '.join(json.loads(c.keywords or '[]'))}
+Keywords: {', '.join(_safe_json(c.keywords, []))}
 Summary: {c.summary or 'N/A'}
-Partners: {', '.join(p.get('partner_name','') for p in json.loads(c.announced_partners or '[]'))}"""
+Partners: {', '.join(p.get('partner_name','') for p in _safe_json(c.announced_partners, []))}"""
 
     search_query = f"{c.company_name} battery {req.message}"
     try:
@@ -1151,8 +1171,9 @@ Partners: {', '.join(p.get('partner_name','') for p in json.loads(c.announced_pa
 
 
 @router.post("/bulk-research")
-async def bulk_research(req: BulkResearchRequest, db: Session = Depends(get_db)):
+async def bulk_research(req: BulkResearchRequest, request: Request, db: Session = Depends(get_db)):
     """Add stubs for unknown companies then queue a research job for each."""
+    check_rate_limit(request, max_calls=3, window_secs=60)
     now = datetime.now(timezone.utc).isoformat()
     names = req.company_names[:10]
 
@@ -1199,7 +1220,7 @@ async def bulk_research(req: BulkResearchRequest, db: Session = Depends(get_db))
 
                 company = inner_db.query(Company).filter(Company.company_name.ilike(company_name)).first()
                 if company:
-                    overrides = set(json.loads(company.manual_overrides or "[]"))
+                    overrides = set(_safe_json(company.manual_overrides, []))
                     for field, val in result.items():
                         if val is not None and field not in ("company_name", "error") and field not in overrides:
                             setattr(company, field, json.dumps(val) if isinstance(val, (list, dict)) else val)
@@ -1254,6 +1275,6 @@ async def bulk_research(req: BulkResearchRequest, db: Session = Depends(get_db))
             finally:
                 inner_db.close()
 
-        asyncio.create_task(_run())
+        asyncio.create_task(_run()).add_done_callback(_log_task_error)
 
     return {"job_ids": job_ids, "queued": len(job_ids)}
