@@ -713,6 +713,39 @@ def company_detail(company_id: int, db: Session = Depends(get_db)):
     return data
 
 
+@router.get("/{company_id}/facilities")
+def list_facilities(company_id: int, db: Session = Depends(get_db)):
+    facilities = db.query(CompanyFacility).filter(
+        CompanyFacility.company_id == company_id
+    ).all()
+    if not facilities:
+        c = db.query(Company).filter(Company.id == company_id).first()
+        if not c:
+            raise HTTPException(status_code=404, detail="Company not found")
+        locs = json.loads(c.company_locations or "[]")
+        return [{"id": None, "company_id": company_id, **loc} for loc in locs]
+    return [_facility_dict(f) for f in facilities]
+
+
+@router.get("/{company_id}/metrics")
+def list_metrics(company_id: int, db: Session = Depends(get_db)):
+    metrics = db.query(CompanyMetric).filter(
+        CompanyMetric.company_id == company_id
+    ).all()
+    return [
+        {
+            "id": m.id,
+            "metric_name": m.metric_name,
+            "metric_value": m.metric_value,
+            "metric_unit": m.metric_unit,
+            "date_recorded": m.date_recorded,
+            "source_name": m.source_name,
+            "source_url": m.source_url,
+        }
+        for m in metrics
+    ]
+
+
 _EDITABLE_FIELDS = {
     "company_website", "crunchbase_url", "linkedin_url", "pitchbook_url",
     "notes", "summary", "long_description", "contact_name", "contact_email",

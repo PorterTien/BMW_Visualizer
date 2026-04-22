@@ -13,7 +13,6 @@ from sqlalchemy.orm import Session
 from backend.database import get_db, SessionLocal
 from backend.models import (
     Company,
-    CompanyFacility,
     CompanyMetric,
     Partnership,
     PartnershipMember,
@@ -78,38 +77,6 @@ def _partnership_dict(p: Partnership, db: Session) -> dict:
         "source_url": p.source_url,
         "date_sourced": p.date_sourced,
         "members": members,
-    }
-
-
-def _facility_dict(f: CompanyFacility) -> dict:
-    return {
-        "id": f.id,
-        "company_id": f.company_id,
-        "facility_name": f.facility_name,
-        "address": f.address,
-        "city": f.city,
-        "state": f.state,
-        "country": f.country,
-        "zip_code": f.zip_code,
-        "lat": f.lat,
-        "lng": f.lng,
-        "phone": f.phone,
-        "facility_type": f.facility_type,
-        "product": f.product,
-        "product_type": f.product_type,
-        "chemistries": f.chemistries,
-        "feedstock": f.feedstock,
-        "capacity": f.capacity,
-        "capacity_units": f.capacity_units,
-        "status": f.status,
-        "workforce": f.workforce,
-        "segment": f.segment,
-        "sources": f.sources,
-        "qc": f.qc,
-        "qc_date": f.qc_date,
-        "source_name": f.source_name,
-        "source_url": f.source_url,
-        "date_added": f.date_added,
     }
 
 
@@ -517,39 +484,3 @@ def _compute_percentiles(metrics_by_company: dict[int, dict]) -> dict[int, float
     return result
 
 
-# ── Facilities endpoint ─────────────────────────────────────────────────────
-
-@router.get("/companies/{company_id}/facilities")
-def list_facilities(company_id: int, db: Session = Depends(get_db)):
-    facilities = db.query(CompanyFacility).filter(
-        CompanyFacility.company_id == company_id
-    ).all()
-    if not facilities:
-        # Fall back to legacy
-        c = db.query(Company).filter(Company.id == company_id).first()
-        if not c:
-            raise HTTPException(404, "Company not found")
-        locs = json.loads(c.company_locations or "[]")
-        return [{"id": None, "company_id": company_id, **loc} for loc in locs]
-    return [_facility_dict(f) for f in facilities]
-
-
-# ── Metrics endpoint ────────────────────────────────────────────────────────
-
-@router.get("/companies/{company_id}/metrics")
-def list_metrics(company_id: int, db: Session = Depends(get_db)):
-    metrics = db.query(CompanyMetric).filter(
-        CompanyMetric.company_id == company_id
-    ).all()
-    return [
-        {
-            "id": m.id,
-            "metric_name": m.metric_name,
-            "metric_value": m.metric_value,
-            "metric_unit": m.metric_unit,
-            "date_recorded": m.date_recorded,
-            "source_name": m.source_name,
-            "source_url": m.source_url,
-        }
-        for m in metrics
-    ]
