@@ -93,7 +93,7 @@ export default function App() {
         )}
 
         {/* Main content */}
-        <main className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden">
+        <main className="flex-1 min-w-0 min-h-0 flex flex-col overflow-y-auto overflow-x-hidden">
           {activeTab === 'map' && (
             <CompanyMap
               filters={filters}

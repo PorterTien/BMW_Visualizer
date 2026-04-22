@@ -554,7 +554,7 @@ export default function CompanyTable({ filters, onOpenCompany }) {
           type="number"
           min={1}
           max={totalPages}
-          className="w-12 border border-bmw-border rounded px-1.5 py-0.5 text-xs bg-white"
+          className="w-16 border border-bmw-border rounded px-1.5 py-0.5 text-xs bg-white"
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
               const v = Math.max(1, Math.min(totalPages, Number(e.target.value)))
