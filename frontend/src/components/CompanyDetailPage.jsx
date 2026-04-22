@@ -260,7 +260,26 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany, d
     <div className="h-full flex flex-col overflow-hidden">
       {/* ── Top header ── */}
       <div className="bg-bmw-navy text-white px-6 py-4 flex-shrink-0">
-        <div className="flex items-start gap-3">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start gap-3 min-w-0 flex-1">
+            {company.company_website && (
+              <LogoImg website={company.company_website} name={company.company_name} />
+            )}
+            <div className="min-w-0 flex-1">
+              <h1 className="text-lg font-display font-bold leading-snug break-words">{company.company_name}</h1>
+              <div className="mt-1 space-y-0.5">
+                {company.company_type && (
+                  <div className="text-sm text-gray-300">{company.company_type}</div>
+                )}
+                {company.company_status && (
+                  <div><span className="bg-white/10 px-2 py-0.5 rounded text-xs">{company.company_status}</span></div>
+                )}
+                {company.company_hq_country && (
+                  <div className="text-sm text-gray-400">{[company.company_hq_city, company.company_hq_state, company.company_hq_country].filter(Boolean).join(', ')}</div>
+                )}
+              </div>
+            </div>
+          </div>
           <button
             onClick={onClose}
             className="text-gray-400 hover:text-white text-sm flex items-center gap-1 shrink-0 transition-colors mt-0.5"
@@ -270,23 +289,6 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany, d
             </svg>
             Close
           </button>
-          {company.company_website && (
-            <LogoImg website={company.company_website} name={company.company_name} />
-          )}
-          <div className="min-w-0 flex-1">
-            <h1 className="text-lg font-display font-bold leading-snug break-words">{company.company_name}</h1>
-            <div className="mt-1 space-y-0.5">
-              {company.company_type && (
-                <div className="text-sm text-gray-300">{company.company_type}</div>
-              )}
-              {company.company_status && (
-                <div><span className="bg-white/10 px-2 py-0.5 rounded text-xs">{company.company_status}</span></div>
-              )}
-              {company.company_hq_country && (
-                <div className="text-sm text-gray-400">{[company.company_hq_city, company.company_hq_state, company.company_hq_country].filter(Boolean).join(', ')}</div>
-              )}
-            </div>
-          </div>
         </div>
       </div>
 
