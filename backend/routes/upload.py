@@ -165,7 +165,6 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
                     date_of_article=news.get("date_of_article"),
                     summary=news.get("summary"),
                     topics=json.dumps(news.get("topics", [])),
-                    file_path=path if hasattr(NewsHeadline, "file_path") else None,
                     created_at=ts,
                 )
                 inner_db.add(n)
