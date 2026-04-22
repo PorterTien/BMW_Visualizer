@@ -643,6 +643,19 @@ _PB_DEAL_TYPE_MAP = {
     'Secondary Transaction - Private': 'equity_stake',
     'Public Investment 2nd Offering': 'equity_stake',
     'IPO': 'equity_stake',
+    'Later Stage VC': 'equity_stake',
+    'Early Stage VC': 'equity_stake',
+    'Venture Capital (Round not specified)': 'equity_stake',
+    'Angel (individual)': 'equity_stake',
+    'Accelerator/Incubator': 'equity_stake',
+    'Corporate': 'equity_stake',
+    'General Corporate Purpose': 'equity_stake',
+    'Joint Venture': 'jv',
+    'Grant': 'government_grant',
+    'Debt - General': 'other',
+    'Debt Refinancing': 'other',
+    'Debt - Acquisition': 'other',
+    'Share Repurchase': 'other',
 }
 
 def import_pitchbook(db) -> dict:
@@ -661,6 +674,16 @@ def import_pitchbook(db) -> dict:
 
     # Build a case-insensitive name lookup for existing companies
     all_companies = {c.company_name.lower(): c for c in db.query(Company).all()}
+
+    # Pre-load existing PitchBook partnerships as (investor_id, battery_id, p_type) for O(1) dedup
+    seen_pairs: set[tuple] = set()
+    for p in db.query(Partnership).filter(Partnership.source_name == 'PitchBook').all():
+        members = db.query(PartnershipMember).filter(PartnershipMember.partnership_id == p.id).all()
+        inv_ids = [m.company_id for m in members if m.role == 'investor']
+        bat_ids = [m.company_id for m in members if m.role == 'investee']
+        for inv_id in inv_ids:
+            for bat_id in bat_ids:
+                seen_pairs.add((inv_id, bat_id, p.partnership_type))
 
     def find_or_create_company(name: str, is_investor: bool = False) -> Company | None:
         key = name.lower()
@@ -758,19 +781,12 @@ def import_pitchbook(db) -> dict:
             if not investor_co or investor_co.id == battery_co.id:
                 continue
 
-            # Deduplicate: skip if this pair + type already exists
-            existing_p = (
-                db.query(Partnership)
-                .join(PartnershipMember, Partnership.id == PartnershipMember.partnership_id)
-                .filter(
-                    Partnership.partnership_type == p_type,
-                    Partnership.date_announced == date_str,
-                    PartnershipMember.company_id == battery_co.id,
-                )
-                .first()
-            )
-            if existing_p:
+            # Deduplicate by (investor, battery_company, type) — date excluded so null-date
+            # rows don't all collapse into one partnership
+            pair_key = (investor_co.id, battery_co.id, p_type)
+            if pair_key in seen_pairs:
                 continue
+            seen_pairs.add(pair_key)
 
             p = Partnership(
                 partnership_name=f"{inv_name} → {company_name}",
