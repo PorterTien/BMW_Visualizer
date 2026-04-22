@@ -12,7 +12,7 @@ from sqlalchemy.dialects.postgresql import JSON as PGJSON
 from sqlalchemy.orm import Session, load_only
 
 from backend.database import get_db
-from backend.models import Company, NewsHeadline, Partnership, PartnershipMember, ResearchJob
+from backend.models import Company, CompanyFacility, CompanyMetric, NewsHeadline, Partnership, PartnershipMember, ResearchJob
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/companies", tags=["companies"])
@@ -434,6 +434,282 @@ def get_company(company_id: int, db: Session = Depends(get_db)):
         .limit(5)
         .all()
     ]
+    return data
+
+
+def _facility_dict(f: CompanyFacility) -> dict:
+    return {
+        "id": f.id,
+        "company_id": f.company_id,
+        "facility_name": f.facility_name,
+        "address": f.address,
+        "city": f.city,
+        "state": f.state,
+        "country": f.country,
+        "zip_code": f.zip_code,
+        "lat": f.lat,
+        "lng": f.lng,
+        "phone": f.phone,
+        "facility_type": f.facility_type,
+        "product": f.product,
+        "product_type": f.product_type,
+        "chemistries": f.chemistries,
+        "feedstock": f.feedstock,
+        "capacity": f.capacity,
+        "capacity_units": f.capacity_units,
+        "status": f.status,
+        "workforce": f.workforce,
+        "segment": f.segment,
+        "sources": f.sources,
+        "qc": f.qc,
+        "qc_date": f.qc_date,
+        "source_name": f.source_name,
+        "source_url": f.source_url,
+        "date_added": f.date_added,
+    }
+
+
+def _partnership_dict_brief(p: Partnership, db: Session) -> dict:
+    from backend.models import PartnershipMember as PM
+    members = [
+        {"company_id": m.company_id, "role": m.role}
+        for m in db.query(PM).filter(PM.partnership_id == p.id).all()
+    ]
+    return {
+        "id": p.id,
+        "partnership_name": p.partnership_name,
+        "partnership_type": p.partnership_type,
+        "stage": p.stage,
+        "direction": p.direction,
+        "date_announced": p.date_announced,
+        "deal_value": p.deal_value,
+        "scope": p.scope,
+        "geography": p.geography,
+        "industry_segment": p.industry_segment,
+        "source_name": p.source_name,
+        "source_url": p.source_url,
+        "date_sourced": p.date_sourced,
+        "members": members,
+    }
+
+
+def _size_similarity(a: Company, b: Company) -> float:
+    pairs = [
+        (a.market_cap_usd, b.market_cap_usd),
+        (a.revenue_usd, b.revenue_usd),
+        (a.number_of_employees, b.number_of_employees),
+        (a.total_funding_usd, b.total_funding_usd),
+    ]
+    similarities = []
+    for va, vb in pairs:
+        if va and vb and va > 0 and vb > 0:
+            ratio = min(va, vb) / max(va, vb)
+            similarities.append(ratio)
+    return sum(similarities) / len(similarities) if similarities else 0.0
+
+
+def _find_similar(company: Company, db: Session, limit: int = 8) -> list[dict]:
+    candidates = db.query(Company).filter(Company.id != company.id).all()
+    if not candidates:
+        return []
+
+    seg = company.industry_segment or company.supply_chain_segment or company.company_type
+    country = company.company_hq_country
+
+    my_partner_ids: set[int] = set()
+    members = db.query(PartnershipMember).filter(
+        PartnershipMember.company_id == company.id
+    ).all()
+    for m in members:
+        siblings = db.query(PartnershipMember).filter(
+            PartnershipMember.partnership_id == m.partnership_id,
+            PartnershipMember.company_id != company.id,
+        ).all()
+        for s in siblings:
+            my_partner_ids.add(s.company_id)
+
+    legacy_partners: set[str] = set()
+    for p in json.loads(company.announced_partners or "[]"):
+        pn = (p.get("partner_name") or "").strip().lower()
+        if pn:
+            legacy_partners.add(pn)
+
+    scored = []
+    for c in candidates:
+        score = 0.0
+        c_seg = c.industry_segment or c.supply_chain_segment or c.company_type
+        if seg and c_seg and seg.lower() == c_seg.lower():
+            score += 40
+        if company.company_type and c.company_type == company.company_type:
+            score += 20
+        score += _size_similarity(company, c) * 20
+
+        c_partner_ids: set[int] = set()
+        for cm in db.query(PartnershipMember).filter(PartnershipMember.company_id == c.id).all():
+            c_partner_ids.add(cm.partnership_id)
+        shared = len(my_partner_ids & c_partner_ids) if my_partner_ids else 0
+
+        c_legacy: set[str] = set()
+        for p in json.loads(c.announced_partners or "[]"):
+            pn = (p.get("partner_name") or "").strip().lower()
+            if pn:
+                c_legacy.add(pn)
+        shared_legacy = len(legacy_partners & c_legacy)
+        score += (shared + shared_legacy) * 5
+
+        if country and c.company_hq_country and country.lower() == c.company_hq_country.lower():
+            score += 5
+
+        scored.append((score, c))
+
+    scored.sort(key=lambda x: -x[0])
+    return [
+        {
+            "id": c.id,
+            "company_name": c.company_name,
+            "company_type": c.company_type,
+            "industry_segment": c.industry_segment or c.supply_chain_segment,
+            "company_hq_country": c.company_hq_country,
+            "company_status": c.company_status,
+            "similarity_score": round(score, 1),
+        }
+        for score, c in scored[:limit]
+        if score > 0
+    ]
+
+
+@router.get("/{company_id}/detail")
+def company_detail(company_id: int, db: Session = Depends(get_db)):
+    c = db.query(Company).filter(Company.id == company_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Company not found")
+
+    data = _company_dict(c)
+
+    # Facilities
+    facilities = db.query(CompanyFacility).filter(
+        CompanyFacility.company_id == company_id
+    ).all()
+    if not facilities:
+        legacy_locs = json.loads(c.company_locations or "[]")
+        data["facilities"] = [{
+            "id": None,
+            "facility_name": loc.get("facility_name"),
+            "address": loc.get("address"),
+            "city": loc.get("city"),
+            "state": loc.get("state"),
+            "country": loc.get("country"),
+            "zip_code": loc.get("zip"),
+            "lat": loc.get("lat"),
+            "lng": loc.get("lng"),
+            "phone": loc.get("phone"),
+            "facility_type": loc.get("product_type"),
+            "product": loc.get("product"),
+            "product_type": loc.get("product_type"),
+            "chemistries": loc.get("chemistries"),
+            "feedstock": loc.get("feedstock"),
+            "capacity": loc.get("capacity"),
+            "capacity_units": loc.get("capacity_units"),
+            "status": loc.get("status"),
+            "workforce": loc.get("workforce"),
+            "segment": loc.get("segment"),
+            "sources": loc.get("sources"),
+            "qc": loc.get("qc"),
+            "qc_date": loc.get("qc_date"),
+            "source_name": c.data_source,
+            "source_url": None,
+            "date_added": c.last_updated,
+        } for loc in legacy_locs]
+    else:
+        data["facilities"] = [_facility_dict(f) for f in facilities]
+
+    # Partnerships
+    member_rows = db.query(PartnershipMember).filter(
+        PartnershipMember.company_id == company_id
+    ).all()
+    partnership_ids = [m.partnership_id for m in member_rows]
+    if partnership_ids:
+        pships = db.query(Partnership).filter(Partnership.id.in_(partnership_ids)).all()
+        data["partnerships"] = [_partnership_dict_brief(p, db) for p in pships]
+    else:
+        data["partnerships"] = []
+
+    if not data["partnerships"] and c.announced_partners:
+        data["partnerships_legacy"] = json.loads(c.announced_partners or "[]")
+    else:
+        data["partnerships_legacy"] = []
+
+    # News
+    data["news"] = [
+        {
+            "id": n.id,
+            "news_headline": n.news_headline,
+            "category": n.category,
+            "date_of_article": n.date_of_article,
+            "news_source": n.news_source,
+            "url": n.url,
+            "summary": n.summary,
+            "partners": json.loads(n.partners or "[]"),
+            "topics": json.loads(n.topics or "[]"),
+        }
+        for n in db.query(NewsHeadline)
+        .filter(NewsHeadline.company_id == company_id)
+        .order_by(NewsHeadline.date_of_article.desc())
+        .all()
+    ]
+
+    data["proceedings"] = []
+
+    # Metrics
+    data["metrics"] = [
+        {
+            "metric_name": m.metric_name,
+            "metric_value": m.metric_value,
+            "metric_unit": m.metric_unit,
+            "date_recorded": m.date_recorded,
+            "source_name": m.source_name,
+            "source_url": m.source_url,
+        }
+        for m in db.query(CompanyMetric).filter(CompanyMetric.company_id == company_id).all()
+    ]
+
+    data["gwh_capacity"] = json.loads(c.gwh_capacity or "{}")
+
+    # Citations
+    citations: list[dict] = []
+    seen_sources: set[tuple] = set()
+
+    def _add_citation(name, url):
+        if not name:
+            return
+        key = (name, url or "")
+        if key not in seen_sources:
+            seen_sources.add(key)
+            citations.append({"source_name": name, "source_url": url})
+
+    source_urls = {
+        "naatbatt_xlsx": "https://www.nrel.gov/transportation/battery-supply-chain-database.html",
+        "bbd_xlsx": "https://www.voltafoundation.org/battery-database",
+        "gigafactory_xlsx": "https://www.ultimamedia.com/gigafactory-database",
+    }
+    if c.data_source:
+        _add_citation(c.data_source, source_urls.get(c.data_source))
+    if c.sources:
+        _add_citation(c.sources, None)
+    if c.sources2:
+        _add_citation(c.sources2, None)
+    for f in data["facilities"]:
+        _add_citation(f.get("source_name"), f.get("source_url"))
+        if f.get("sources"):
+            _add_citation(f["sources"], None)
+    for m in data["metrics"]:
+        _add_citation(m.get("source_name"), m.get("source_url"))
+    for p in data["partnerships"]:
+        _add_citation(p.get("source_name"), p.get("source_url"))
+
+    data["citations"] = citations
+    data["similar_companies"] = _find_similar(c, db)
+
     return data
 
 
