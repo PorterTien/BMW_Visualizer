@@ -3,9 +3,11 @@ from sqlalchemy.orm import sessionmaker, DeclarativeBase
 from backend.config import DATABASE_URL
 
 _db_url = DATABASE_URL
-if _db_url.startswith("postgresql://") or _db_url.startswith("postgresql+psycopg2://"):
-    _db_url = _db_url.replace("postgresql+psycopg2://", "postgresql+psycopg://", 1)
-    _db_url = _db_url.replace("postgresql://", "postgresql+psycopg://", 1)
+# Normalize Railway's postgres:// and postgresql:// to psycopg2 driver
+if _db_url.startswith("postgres://"):
+    _db_url = _db_url.replace("postgres://", "postgresql+psycopg2://", 1)
+elif _db_url.startswith("postgresql://") and "+psycopg" not in _db_url:
+    _db_url = _db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
 
 connect_args = {}
 if _db_url.startswith("sqlite"):
