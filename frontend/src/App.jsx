@@ -7,9 +7,13 @@ import PartnershipNetwork from './components/PartnershipNetwork'
 import ResearchPanel from './components/ResearchPanel'
 import WatchlistPanel from './components/WatchlistPanel'
 import CompanyDetailPage from './components/CompanyDetailPage'
+import LoginPage from './components/LoginPage'
 import { getSeedStatus, triggerSeed, getWatchlistDigest } from './api/client'
+import { supabase } from './lib/supabase'
+import { setAuthToken } from './api/client'
 
 export default function App() {
+  const [session, setSession] = useState(undefined) // undefined = loading, null = logged out
   const [activeTab, setActiveTab] = useState('map')
   const [filters, setFilters] = useState({ search: '', types: [], statuses: [], segments: [], countries: [] })
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -19,6 +23,19 @@ export default function App() {
   const [detailCompanyId, setDetailCompanyId] = useState(null)
   const [dataImportOpen, setDataImportOpen] = useState(false)
   const seedPollRef = useRef(null)
+
+  // Auth: listen for Supabase session changes
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session: s } }) => {
+      setSession(s)
+      setAuthToken(s?.access_token ?? null)
+    })
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
+      setSession(s)
+      setAuthToken(s?.access_token ?? null)
+    })
+    return () => subscription.unsubscribe()
+  }, [])
 
   // Resizable company detail panel
   const [panelWidth, setPanelWidth] = useState(700)
@@ -42,8 +59,9 @@ export default function App() {
 
   const [watchlistBreaking, setWatchlistBreaking] = useState(0)
 
-  // Poll for breaking news count to show badge in navbar
+  // Poll for breaking news count to show badge in navbar (only when logged in)
   useEffect(() => {
+    if (!session) return
     function checkBreaking() {
       getWatchlistDigest()
         .then(({ data }) => setWatchlistBreaking(data.filter((d) => d.has_breaking).length))
@@ -52,7 +70,7 @@ export default function App() {
     checkBreaking()
     const iv = setInterval(checkBreaking, 60000)
     return () => clearInterval(iv)
-  }, [])
+  }, [session])
 
   useEffect(() => {
     getSeedStatus()
@@ -83,6 +101,23 @@ export default function App() {
 
   const showSidebar = activeTab === 'map' || activeTab === 'table'
 
+  // Show loading spinner while checking auth
+  if (session === undefined) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-bmw-navy">
+        <svg className="animate-spin w-8 h-8 text-bmw-blue" fill="none" viewBox="0 0 24 24">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+        </svg>
+      </div>
+    )
+  }
+
+  // Show login page when not authenticated
+  if (!session) {
+    return <LoginPage />
+  }
+
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-white">
       <Navbar
@@ -90,6 +125,7 @@ export default function App() {
         setActiveTab={(tab) => { setDetailCompanyId(null); setActiveTab(tab) }}
         watchlistBreaking={watchlistBreaking}
         onOpenDataImport={() => setDataImportOpen(true)}
+        user={session?.user}
       />
 
       {/* Seeding banner */}

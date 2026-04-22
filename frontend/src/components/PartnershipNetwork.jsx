@@ -402,26 +402,12 @@ function PartnershipNetwork({ onSelectCompany }) {
     return max
   }, [graphData.nodes])
 
-  // Link counts per node — used as fallback scaling when no financial metric data exists
-  const linkCounts = useMemo(() => {
-    const counts = {}
-    displayGraph.links.forEach(l => {
-      const s = typeof l.source === 'object' ? l.source.id : l.source
-      const t = typeof l.target === 'object' ? l.target.id : l.target
-      counts[s] = (counts[s] || 0) + 1
-      counts[t] = (counts[t] || 0) + 1
-    })
-    counts.__max = Math.max(1, ...Object.values(counts).filter(v => typeof v === 'number'))
-    return counts
-  }, [displayGraph.links])
-
   // Stable refs so drag handler and forceCollide always see current values without dep churn
   const scaleMetricRef = useRef(scaleMetric)
   scaleMetricRef.current = scaleMetric
   const maxValuesRef = useRef(maxValues)
   maxValuesRef.current = maxValues
-  const linkCountsRef = useRef(linkCounts)
-  linkCountsRef.current = linkCounts
+  const linkCountsRef = useRef({})   // populated after displayGraph is computed below
 
   // Detect unknowns for auto-classify nudge
   const unknownCount = useMemo(() => {
@@ -577,6 +563,22 @@ function PartnershipNetwork({ onSelectCompany }) {
 
   // Keep ref updated so onEngineStop can access current nodes without a closure dep
   displayGraphRef.current = displayGraph
+
+  // Link counts per node — used as fallback scaling when no financial metric data exists
+  // Must be defined AFTER displayGraph
+  const linkCounts = useMemo(() => {
+    const counts = {}
+    displayGraph.links.forEach(l => {
+      const s = typeof l.source === 'object' ? l.source.id : l.source
+      const t = typeof l.target === 'object' ? l.target.id : l.target
+      counts[s] = (counts[s] || 0) + 1
+      counts[t] = (counts[t] || 0) + 1
+    })
+    counts.__max = Math.max(1, ...Object.values(counts).filter(v => typeof v === 'number'))
+    return counts
+  }, [displayGraph.links])
+  const linkCountsRef = useRef(linkCounts)
+  linkCountsRef.current = linkCounts
 
   // Compute link curvatures for parallel edges (use displayGraph — what FG actually renders)
   useMemo(() => {

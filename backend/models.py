@@ -220,11 +220,13 @@ class WatchlistEntry(Base):
     __tablename__ = "watchlist"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    company_id = Column(Integer, ForeignKey("companies.id"), nullable=False, unique=True)
+    company_id = Column(Integer, ForeignKey("companies.id"), nullable=False)
+    user_id = Column(Text, nullable=True, index=True)   # Supabase auth UID; NULL = legacy global entry
     added_at = Column(Text)
 
 
 Index("ix_watchlist_company", WatchlistEntry.company_id)
+Index("ix_watchlist_user", WatchlistEntry.user_id)
 
 
 class WatchlistDigest(Base):
