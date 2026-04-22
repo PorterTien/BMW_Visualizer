@@ -26,7 +26,12 @@
       "Bash(npm install:*)",
       "Bash(npm view:*)",
       "Bash(npx tsc *)",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Bash(sqlite3 /Users/portertien/Projects/BMW_data_visualizer/backend/battery_intel.db \"PRAGMA table_info\\(companies\\);\")",
+      "Bash(sqlite3 /Users/portertien/Projects/BMW_data_visualizer/backend/battery_intel.db \"ALTER TABLE companies ADD COLUMN manual_overrides TEXT;\")",
+      "Bash(sqlite3 /Users/portertien/Projects/BMW_data_visualizer/battery_intel.db \"ALTER TABLE companies ADD COLUMN manual_overrides TEXT;\")",
+      "Bash(sqlite3 /Users/portertien/Projects/BMW_data_visualizer/backend/battery_intel.db \"SELECT name FROM sqlite_master WHERE type='table';\")",
+      "Bash(sqlite3 /Users/portertien/Projects/BMW_data_visualizer/battery_intel.db \"PRAGMA table_info\\(companies\\);\")"
     ]
   }
 }
