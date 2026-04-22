@@ -407,6 +407,8 @@ function PartnershipNetwork({ onSelectCompany }) {
   scaleMetricRef.current = scaleMetric
   const maxValuesRef = useRef(maxValues)
   maxValuesRef.current = maxValues
+  const linkCountsRef = useRef({})  // updated after displayGraph is computed below
+
   // Detect unknowns for auto-classify nudge
   const unknownCount = useMemo(() => {
     const unknownNodes = graphData.nodes.filter(n => !n.type || n.type === 'other').length
@@ -575,7 +577,6 @@ function PartnershipNetwork({ onSelectCompany }) {
     counts.__max = Math.max(1, ...Object.values(counts).filter(v => typeof v === 'number'))
     return counts
   }, [displayGraph.links])
-  const linkCountsRef = useRef(linkCounts)
   linkCountsRef.current = linkCounts
 
   // Compute link curvatures for parallel edges (use displayGraph — what FG actually renders)
