@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef, useCallback, useMemo, memo } from 'react'
 import { getPartnershipGraph, getCompaniesNetwork, enrichPartnershipNetwork, getJob } from '../api/client'
+import { forceCollide } from 'd3-force'
 
 /* ── Constants ── */
 
@@ -234,12 +235,9 @@ function PartnershipNetwork({ onSelectCompany }) {
       fg.d3Force('center')?.strength(0.02)
       fg.d3Force('link')?.distance(180).strength(0.2)
       fg.d3Force('y', null) // remove any leftover Y force
-      import('d3-force').then(d3 => {
-        fg.d3Force('collide', d3.forceCollide(n => {
-          // Match visual radius exactly so the simulation treats nodes as solid balls
-          return nodeRadius(n, scaleMetricRef.current, maxValuesRef.current) + 6
-        }).strength(1).iterations(8))
-      })
+      fg.d3Force('collide', forceCollide(n => {
+        return nodeRadius(n, scaleMetricRef.current, maxValuesRef.current) + 6
+      }).strength(1).iterations(8))
     }, 100)
     return () => clearTimeout(t)
   }, [FG, graphData])
@@ -572,8 +570,8 @@ function PartnershipNetwork({ onSelectCompany }) {
     if (node.x == null || node.y == null) return
     const r = nodeRadius(node, scaleMetric, maxValues)
     const { fill, border } = node.in_db === false
-      ? hashColor(node.name)
-      : typeColors(node.type, dark, node.name)
+      ? hashColor(node.name || node.id || 'x')
+      : typeColors(node.type, dark, node.name || '')
     const isSearch  = searchQuery && node.name.toLowerCase().includes(searchQuery.toLowerCase())
     const isHov     = hoveredNodeRef.current?.id === node.id
     const isClicked = clickedNodeRef.current === node.id
@@ -616,7 +614,8 @@ function PartnershipNetwork({ onSelectCompany }) {
     const fs = Math.max(4, Math.min(11, 10 / globalScale))
     ctx.font = `${(isHov || isClicked) ? 'bold ' : ''}${fs}px Inter, system-ui, sans-serif`
     ctx.textAlign = 'center'; ctx.textBaseline = 'top'
-    const label = node.name.length > 22 ? node.name.slice(0, 20) + '\u2026' : node.name
+    const rawName = node.name || ''
+    const label = rawName.length > 22 ? rawName.slice(0, 20) + '\u2026' : rawName
     const ty = node.y + r + 2.5 / globalScale
 
     ctx.fillStyle = dark ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.8)'
@@ -1187,7 +1186,7 @@ function HoverTooltip({ listenRef, dark }) {
       )}
       {node.type && node.type !== 'other' && node.id !== INVESTOR_META_ID && (
         <div className="flex items-center gap-1.5 mt-1">
-          <span className="w-2 h-2 rounded-full" style={{ backgroundColor: typeColors(node.type, dark, node.name).fill }} />
+          <span className="w-2 h-2 rounded-full" style={{ backgroundColor: typeColors(node.type, dark, node.name || '').fill }} />
           <span className={`text-xs ${textMuted}`}>{node.type}</span>
         </div>
       )}

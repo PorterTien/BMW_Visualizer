@@ -242,6 +242,7 @@ export default function CompanyMap({ filters, onSelectCompany, highlightName }) 
           attribution={LIGHT_ATTR}
           url={LIGHT_TILES}
           noWrap={true}
+          bounds={[[-90, -180], [90, 180]]}
         />
 
         {heatmapMode ? (
