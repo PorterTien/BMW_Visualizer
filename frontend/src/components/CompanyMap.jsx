@@ -1,8 +1,8 @@
-import React, { useEffect, useState, useMemo } from 'react'
+import React, { useEffect, useState, useMemo, useCallback } from 'react'
 import { MapContainer, TileLayer, CircleMarker, Marker, Popup } from 'react-leaflet'
 import MarkerClusterGroup from 'react-leaflet-cluster'
 import L from 'leaflet'
-import { getCompaniesMap } from '../api/client'
+import { getCompaniesMap, getWatchlist, addToWatchlist, removeFromWatchlist } from '../api/client'
 
 const LIGHT_TILES = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
 const DARK_TILES = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
@@ -10,6 +10,12 @@ const LIGHT_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">Ope
 const DARK_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>'
 
 const SPLIT_ZOOM = 8
+
+const COUNTRY_ALIASES = {
+  'United States': ['united states', 'us'],
+  'United Kingdom': ['united kingdom', 'uk'],
+  'South Korea': ['south korea', 'republic of korea'],
+}
 
 const TYPE_COLORS = {
   'Raw Materials': '#F59E0B',
@@ -70,12 +76,33 @@ function createDotIcon(companyType, isHQ) {
 
 /* ── Shared popup content ── */
 
-function PopupContent({ c, onSelectCompany }) {
+function PopupContent({ c, onSelectCompany, watchlistIds, onToggleWatchlist }) {
   const baseColor = TYPE_COLORS[c.company_type] || '#9CA3AF'
   const isHQ = c.is_hq
+  const starred = watchlistIds.has(c.id)
+  const [busy, setBusy] = React.useState(false)
+
+  async function handleStar(e) {
+    e.stopPropagation()
+    setBusy(true)
+    await onToggleWatchlist(c.id, starred)
+    setBusy(false)
+  }
+
   return (
     <div className="min-w-[200px]">
-      <div className="font-bold text-bmw-text-primary text-sm mb-2">{c.company_name}</div>
+      <div className="flex items-start justify-between gap-2 mb-2">
+        <div className="font-bold text-bmw-text-primary text-sm leading-tight">{c.company_name}</div>
+        <button
+          onClick={handleStar}
+          disabled={busy}
+          title={starred ? 'Remove from watchlist' : 'Add to watchlist'}
+          className="flex-shrink-0 text-lg leading-none transition-colors disabled:opacity-40"
+          style={{ color: starred ? '#F59E0B' : '#D1D5DB' }}
+        >
+          {starred ? '★' : '☆'}
+        </button>
+      </div>
       {c.facility_name && c.facility_name !== c.company_name && (
         <div className="text-xs text-bmw-text-secondary font-medium mb-1">{c.facility_name}</div>
       )}
@@ -107,7 +134,7 @@ function PopupContent({ c, onSelectCompany }) {
       </div>
       <button
         onClick={() => onSelectCompany(c.id)}
-        className="mt-2 w-full bg-bmw-blue text-white text-xs py-1 rounded hover:bg-bmw-blue"
+        className="mt-2 w-full bg-bmw-blue text-white text-xs py-1 rounded hover:bg-[#3a88ee]"
       >
         Company Details
       </button>
@@ -178,6 +205,7 @@ export default function CompanyMap({ filters, onSelectCompany, highlightName }) 
   const [companies, setCompanies] = useState([])
   const [loading, setLoading] = useState(true)
   const [heatmapMode, setHeatmapMode] = useState(false)
+  const [watchlistIds, setWatchlistIds] = useState(new Set())
 
   useEffect(() => {
     getCompaniesMap()
@@ -186,21 +214,40 @@ export default function CompanyMap({ filters, onSelectCompany, highlightName }) 
       .finally(() => setLoading(false))
   }, [])
 
+  useEffect(() => {
+    getWatchlist()
+      .then(({ data }) => setWatchlistIds(new Set(data.map(w => w.id))))
+      .catch(() => {})
+  }, [])
+
+  const handleToggleWatchlist = useCallback(async (companyId, currentlyStarred) => {
+    try {
+      if (currentlyStarred) {
+        await removeFromWatchlist(companyId)
+        setWatchlistIds(prev => { const next = new Set(prev); next.delete(companyId); return next })
+      } else {
+        await addToWatchlist(companyId)
+        setWatchlistIds(prev => new Set([...prev, companyId]))
+      }
+    } catch (_) {}
+  }, [])
+
   const filtered = useMemo(() => companies.filter((c) => {
     if (filters.search) {
       const q = filters.search.toLowerCase()
       if (!c.company_name?.toLowerCase().includes(q)) return false
     }
-    if (filters.types.length && !filters.types.includes(c.company_type)) return false
     if (filters.statuses.length && !filters.statuses.includes(c.company_status)) return false
-    if (filters.segments.length && !filters.segments.includes(c.supply_chain_segment)) return false
+    if (filters.segments.length) {
+      const segs = (c.supply_chain_segment || '').split(' | ')
+      if (!filters.segments.some((seg) => segs.includes(seg))) return false
+    }
     if (filters.countries.length) {
-      const facCountry = c.facility_country?.trim().toUpperCase() || ''
-      const hqCountry = c.company_hq_country?.trim().toUpperCase() || ''
+      const hq = (c.company_hq_country || '').trim().toLowerCase()
+      const fac = (c.facility_country || '').trim().toLowerCase()
       const matched = filters.countries.some((co) => {
-        const countryUpper = co.toUpperCase()
-        return facCountry === countryUpper || hqCountry === countryUpper || 
-               facCountry.includes(countryUpper) || hqCountry.includes(countryUpper)
+        const aliases = COUNTRY_ALIASES[co] || [co.toLowerCase()]
+        return aliases.includes(hq) || aliases.includes(fac)
       })
       if (!matched) return false
     }
@@ -222,16 +269,20 @@ export default function CompanyMap({ filters, onSelectCompany, highlightName }) 
         zoom={4}
         style={{ height: '100%', width: '100%' }}
         worldCopyJump={false}
+        maxBounds={[[-90, -180], [90, 180]]}
+        maxBoundsViscosity={1.0}
         zoomAnimation={true}
         zoomAnimationThreshold={4}
         wheelPxPerZoomLevel={120}
         wheelDebounceTime={80}
-        minZoom={1}
+        minZoom={2}
       >
         <TileLayer
           key="light"
           attribution={LIGHT_ATTR}
           url={LIGHT_TILES}
+          noWrap={true}
+          bounds={[[-90, -180], [90, 180]]}
         />
 
         {heatmapMode ? (
@@ -252,7 +303,7 @@ export default function CompanyMap({ filters, onSelectCompany, highlightName }) 
                   icon={createDotIcon(c.company_type, c.is_hq)}
                 >
                   <Popup>
-                    <PopupContent c={c} onSelectCompany={onSelectCompany} />
+                    <PopupContent c={c} onSelectCompany={onSelectCompany} watchlistIds={watchlistIds} onToggleWatchlist={handleToggleWatchlist} />
                   </Popup>
                 </Marker>
               ))}
@@ -289,7 +340,7 @@ export default function CompanyMap({ filters, onSelectCompany, highlightName }) 
                   }}
                 >
                   <Popup>
-                    <PopupContent c={c} onSelectCompany={onSelectCompany} />
+                    <PopupContent c={c} onSelectCompany={onSelectCompany} watchlistIds={watchlistIds} onToggleWatchlist={handleToggleWatchlist} />
                   </Popup>
                 </CircleMarker>
               </React.Fragment>

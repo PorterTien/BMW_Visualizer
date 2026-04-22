@@ -8,3 +8,4 @@ uploads/
 .gstack/
 dist/
 frontend/node_modules/
+.DS_Store

@@ -1,23 +1,27 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { getCompanies } from '../api/client'
 
-const TYPES = [
-  'Raw Materials', 'Battery Grade Materials', 'Other Battery Components & Mat.',
-  'Electrode & Cell Manufacturing', 'Module-Pack Manufacturing',
-  'Recycling-Repurposing', 'Equipment', 'R&D', 'Services & Consulting',
-  'Modeling & Software', 'Distributors', 'Professional Services',
-]
-
 const STATUSES = [
   'Commercial', 'Pre-commercial/startup', 'Planned', 'Under Construction',
   'Pilot Plant', 'Closed', 'Operational', 'Paused',
 ]
 
 const SEGMENTS = [
-  'Raw Materials', 'Upstream', 'Midstream', 'Downstream', 'Append2',
+  'Upstream', 'Midstream', 'Downstream',
+  'Raw Materials', 'Battery Grade Materials', 'Other Battery Components & Materials',
+  'Electrode & Cell Manufacturing', 'Module & Pack Manufacturing',
+  'Equipment Manufacturing', 'End-of-life Recycling',
+  'R&D', 'Modeling & Software', 'Technical Consulting Services',
+  'Legal & Financial Services', 'Vehicle OEM', 'Education', 'Government',
 ]
 
-const COUNTRIES = ['US', 'Canada']
+const COUNTRIES = [
+  'United States', 'Germany', 'China', 'United Kingdom', 'Canada',
+  'India', 'France', 'Japan', 'South Korea', 'Switzerland',
+  'Sweden', 'Australia', 'Italy', 'Spain', 'Austria',
+  'Netherlands', 'Belgium', 'Taiwan', 'Denmark', 'Finland',
+  'Norway', 'Israel', 'Singapore',
+]
 
 function DropdownFilter({ label, options, selected, onChange }) {
   const [open, setOpen] = useState(false)
@@ -176,19 +180,13 @@ export default function Sidebar({ filters, setFilters, collapsed, setCollapsed, 
           </div>
 
           <DropdownFilter
-            label="Type"
-            options={TYPES}
-            selected={filters.types}
-            onChange={(v) => setFilters((f) => ({ ...f, types: v }))}
-          />
-          <DropdownFilter
             label="Status"
             options={STATUSES}
             selected={filters.statuses}
             onChange={(v) => setFilters((f) => ({ ...f, statuses: v }))}
           />
           <DropdownFilter
-            label="Segment"
+            label="Category"
             options={SEGMENTS}
             selected={filters.segments}
             onChange={(v) => setFilters((f) => ({ ...f, segments: v }))}

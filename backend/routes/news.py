@@ -7,18 +7,40 @@ import re
 from datetime import datetime, timezone
 
 import requests as req_lib
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from backend.database import get_db
 from backend.models import NewsHeadline, ResearchJob
+from backend.rate_limit import check_rate_limit
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/news", tags=["news"])
 
-# In-process cache so each URL is fetched at most once per server run
+
+def _log_task_error(task: asyncio.Task) -> None:
+    if not task.cancelled() and task.exception():
+        log.error("Background task %s raised: %s", task.get_name(), task.exception())
+
+
+def _safe_json(val: str | None, default):
+    if not val:
+        return default
+    try:
+        return json.loads(val)
+    except (json.JSONDecodeError, TypeError):
+        return default
+
+# In-process cache: at most 500 entries (LRU-eviction via insertion-order dict)
+_THUMB_CACHE_MAX = 500
 _thumb_cache: dict[str, str | None] = {}
+
+
+def _thumb_cache_put(url: str, value: str | None) -> None:
+    if len(_thumb_cache) >= _THUMB_CACHE_MAX:
+        _thumb_cache.pop(next(iter(_thumb_cache)))
+    _thumb_cache[url] = value
 
 
 def _news_dict(n: NewsHeadline) -> dict:
@@ -28,11 +50,11 @@ def _news_dict(n: NewsHeadline) -> dict:
         "company_name": n.company_name,
         "news_headline": n.news_headline,
         "category": n.category,
-        "partners": json.loads(n.partners or "[]"),
+        "partners": _safe_json(n.partners, []),
         "news_source": n.news_source,
         "date_of_article": n.date_of_article,
         "location": n.location,
-        "topics": json.loads(n.topics or "[]"),
+        "topics": _safe_json(n.topics, []),
         "url": n.url,
         "summary": n.summary,
         "created_at": n.created_at,
@@ -89,7 +111,7 @@ async def get_thumbnail(url: str):
     if url in _thumb_cache:
         return {"thumbnail_url": _thumb_cache[url]}
     img = await asyncio.get_event_loop().run_in_executor(None, _fetch_og_image, url)
-    _thumb_cache[url] = img
+    _thumb_cache_put(url, img)
     return {"thumbnail_url": img}
 
 
@@ -125,7 +147,8 @@ class NewsSearchRequest(BaseModel):
 
 
 @router.post("/search")
-async def search_news(req: NewsSearchRequest, db: Session = Depends(get_db)):
+async def search_news(req: NewsSearchRequest, request: Request, db: Session = Depends(get_db)):
+    check_rate_limit(request, max_calls=10, window_secs=60)
     now = datetime.now(timezone.utc).isoformat()
     job = ResearchJob(
         job_type="news_search",
@@ -189,5 +212,5 @@ async def search_news(req: NewsSearchRequest, db: Session = Depends(get_db)):
         finally:
             inner_db.close()
 
-    asyncio.create_task(_run())
+    asyncio.create_task(_run()).add_done_callback(_log_task_error)
     return {"job_id": job_id}

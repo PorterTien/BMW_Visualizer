@@ -70,6 +70,10 @@ class Company(Base):
 
 
 Index("ix_company_name", Company.company_name)
+Index("ix_company_type", Company.company_type)
+Index("ix_company_status", Company.company_status)
+Index("ix_supply_chain_segment", Company.supply_chain_segment)
+Index("ix_company_hq_country", Company.company_hq_country)
 
 
 class NewsHeadline(Base):

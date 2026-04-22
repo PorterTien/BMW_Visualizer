@@ -223,7 +223,7 @@ function InfoRow({ label, value }) {
   )
 }
 
-export default function WatchlistPanel() {
+export default function WatchlistPanel({ onOpenCompany }) {
   const [watchlist, setWatchlist] = useState([])
   const [digests, setDigests] = useState([])
   const [loading, setLoading] = useState(true)
@@ -471,9 +471,14 @@ export default function WatchlistPanel() {
                     <div className="flex items-center gap-3 mb-3">
                       <CompanyFavicon website={companyDetail.company_website} name={companyDetail.company_name} size={10} />
                       <div className="min-w-0">
-                        <h3 className="font-bold text-gray-800 text-sm leading-snug truncate">{companyDetail.company_name}</h3>
+                        <button
+                          onClick={() => onOpenCompany?.(selectedId)}
+                          className="block w-full font-bold text-gray-800 text-sm leading-snug text-left hover:text-bmw-blue hover:underline break-words"
+                        >
+                          {companyDetail.company_name}
+                        </button>
                         {companyDetail.company_type && (
-                          <span className="text-xs text-bmw-blue font-medium">{companyDetail.company_type}</span>
+                          <div className="text-xs text-bmw-blue font-medium mt-0.5">{companyDetail.company_type}</div>
                         )}
                       </div>
                     </div>

@@ -20,6 +20,13 @@ from backend.scheduler import get_next_run_time, start_scheduler, stop_scheduler
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
 log = logging.getLogger(__name__)
 
+
+def _log_task_error(task: asyncio.Task) -> None:
+    if not task.cancelled() and task.exception():
+        log.error("Background task %s raised an exception: %s", task.get_name(), task.exception())
+
+_seed_lock = asyncio.Lock()
+
 app = FastAPI(title="BMW Battery Intelligence API", version="1.0.0")
 
 _default_cors = "http://localhost:5173,http://127.0.0.1:5173"
@@ -58,22 +65,28 @@ async def startup():
         count = db.query(Company).count()
         if count == 0:
             log.info("DB is empty — auto-triggering NAATBatt seed in background.")
-            asyncio.create_task(_auto_seed())
+            t = asyncio.create_task(_auto_seed())
+            t.add_done_callback(_log_task_error)
     finally:
         db.close()
 
 
 async def _run_seed(force: bool):
-    from backend.database import SessionLocal
-    from backend.seed import import_bbd, import_gigafactory, import_naatbatt
+    if _seed_lock.locked():
+        log.info("Seed already running — skipping duplicate trigger.")
+        return
+    async with _seed_lock:
+        from backend.database import SessionLocal
+        from backend.seed import import_bbd, import_gigafactory, import_naatbatt, import_pitchbook
 
-    db = SessionLocal()
-    try:
-        await asyncio.get_event_loop().run_in_executor(None, import_naatbatt, db, force)
-        await asyncio.get_event_loop().run_in_executor(None, import_bbd, db)
-        await asyncio.get_event_loop().run_in_executor(None, import_gigafactory, db)
-    finally:
-        db.close()
+        db = SessionLocal()
+        try:
+            await asyncio.get_event_loop().run_in_executor(None, import_naatbatt, db, force)
+            await asyncio.get_event_loop().run_in_executor(None, import_bbd, db)
+            await asyncio.get_event_loop().run_in_executor(None, import_gigafactory, db)
+            await asyncio.get_event_loop().run_in_executor(None, import_pitchbook, db)
+        finally:
+            db.close()
 
 
 async def _auto_seed():
@@ -105,15 +118,17 @@ def sync_status(db: Session = Depends(get_db)):
 
 
 @app.post("/api/sync/naatbatt")
-def trigger_naatbatt_sync():
-    asyncio.create_task(_run_seed(True))
+async def trigger_naatbatt_sync():
+    t = asyncio.create_task(_run_seed(True))
+    t.add_done_callback(_log_task_error)
     return {"status": "sync_started"}
 
 
 # Seed endpoints
 @app.post("/api/seed")
-def trigger_seed():
-    asyncio.create_task(_run_seed(False))
+async def trigger_seed():
+    t = asyncio.create_task(_run_seed(False))
+    t.add_done_callback(_log_task_error)
     return {"status": "seed_started"}
 
 

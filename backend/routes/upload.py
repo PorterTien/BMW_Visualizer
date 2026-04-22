@@ -18,11 +18,23 @@ from backend.models import Company, NewsHeadline, Partnership, PartnershipMember
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/upload", tags=["upload"])
 
+
+def _log_task_error(task: asyncio.Task) -> None:
+    if not task.cancelled() and task.exception():
+        log.error("Background task %s raised: %s", task.get_name(), task.exception())
+
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
 def _save_file(upload: UploadFile) -> str:
-    dest = Path(UPLOAD_DIR) / upload.filename
+    # Strip directory components to prevent path traversal
+    safe_name = Path(upload.filename or "upload").name
+    if not safe_name or safe_name in (".", ".."):
+        raise HTTPException(400, "Invalid filename.")
+    dest = (Path(UPLOAD_DIR) / safe_name).resolve()
+    upload_root = Path(UPLOAD_DIR).resolve()
+    if not str(dest).startswith(str(upload_root)):
+        raise HTTPException(400, "Invalid filename.")
     with open(dest, "wb") as f:
         f.write(upload.file.read())
     return str(dest)
@@ -192,7 +204,7 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
         finally:
             inner_db.close()
 
-    asyncio.create_task(_run())
+    asyncio.create_task(_run()).add_done_callback(_log_task_error)
     return {"job_id": job_id, "filename": filename}
 
 
@@ -747,7 +759,7 @@ async def upload_partnerships(file: UploadFile = File(...), db: Session = Depend
     db.refresh(enrich_job)
     enrich_job_id = enrich_job.id
 
-    asyncio.create_task(_enrich_companies_bg(enrich_job_id, ts))
+    asyncio.create_task(_enrich_companies_bg(enrich_job_id, ts)).add_done_callback(_log_task_error)
 
     SOURCE_LABELS = {
         'pitchbook_companies': 'PitchBook — Company List',
