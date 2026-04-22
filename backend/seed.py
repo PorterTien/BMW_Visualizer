@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from backend.config import NAATBATT_LOCAL_PATH, NAATBATT_URL, VALID_COUNTRIES
 from backend.database import SessionLocal, init_db
+from sqlalchemy.exc import IntegrityError
 from backend.models import Company, Partnership, PartnershipMember, SyncLog
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
@@ -402,9 +403,12 @@ def import_naatbatt(db, force_download: bool = False) -> dict:
                     setattr(existing, field, val)
             updated += 1
         else:
-            company = Company(**data)
-            db.add(company)
-            added += 1
+            try:
+                with db.begin_nested():
+                    db.add(Company(**data))
+                added += 1
+            except IntegrityError:
+                log.debug("Skipping duplicate company (naatbatt): %s", data.get("company_name"))
 
     db.commit()
     log.info("Import complete: %d added, %d updated", added, updated)
@@ -513,8 +517,12 @@ def import_bbd(db) -> dict:
             existing.battery_chemistry_flags = data["battery_chemistry_flags"]
             updated += 1
         else:
-            db.add(Company(**data))
-            added += 1
+            try:
+                with db.begin_nested():
+                    db.add(Company(**data))
+                added += 1
+            except IntegrityError:
+                log.debug("Skipping duplicate company (bbd): %s", name)
 
     db.commit()
     log.info("BBD import complete: %d added, %d updated", added, updated)
@@ -594,9 +602,13 @@ def import_gigafactory(db) -> dict:
                 data_source="gigafactory_xlsx",
                 last_updated=now,
             )
-            db.add(company)
-            batch_added[name.lower()] = company
-            added += 1
+            try:
+                with db.begin_nested():
+                    db.add(company)
+                batch_added[name.lower()] = company
+                added += 1
+            except IntegrityError:
+                log.debug("Skipping duplicate company (gigafactory): %s", name)
 
     db.commit()
     log.info("Gigafactory import complete: %d added, %d updated", added, updated)
@@ -654,17 +666,24 @@ def import_pitchbook(db) -> dict:
         key = name.lower()
         if key in all_companies:
             return all_companies[key]
-        # Create a minimal record
         c = Company(
             company_name=name,
             data_source="pitchbook_xlsx",
             last_updated=now,
             industry_segment="other" if is_investor else None,
         )
-        db.add(c)
-        db.flush()  # get the id
-        all_companies[key] = c
-        return c
+        try:
+            with db.begin_nested():
+                db.add(c)
+                db.flush()
+            all_companies[key] = c
+            return c
+        except IntegrityError:
+            # Race: another import inserted this name between our lookup and insert
+            existing = db.query(Company).filter(Company.company_name.ilike(name)).first()
+            if existing:
+                all_companies[key] = existing
+            return existing
 
     for _, row in df.iterrows():
         raw_company = str(row.get('Companies', '') or '')

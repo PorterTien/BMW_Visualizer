@@ -25,6 +25,8 @@ def _log_task_error(task: asyncio.Task) -> None:
     if not task.cancelled() and task.exception():
         log.error("Background task %s raised an exception: %s", task.get_name(), task.exception())
 
+_seed_lock = asyncio.Lock()
+
 app = FastAPI(title="BMW Battery Intelligence API", version="1.0.0")
 
 _default_cors = "http://localhost:5173,http://127.0.0.1:5173"
@@ -70,17 +72,21 @@ async def startup():
 
 
 async def _run_seed(force: bool):
-    from backend.database import SessionLocal
-    from backend.seed import import_bbd, import_gigafactory, import_naatbatt, import_pitchbook
+    if _seed_lock.locked():
+        log.info("Seed already running — skipping duplicate trigger.")
+        return
+    async with _seed_lock:
+        from backend.database import SessionLocal
+        from backend.seed import import_bbd, import_gigafactory, import_naatbatt, import_pitchbook
 
-    db = SessionLocal()
-    try:
-        await asyncio.get_event_loop().run_in_executor(None, import_naatbatt, db, force)
-        await asyncio.get_event_loop().run_in_executor(None, import_bbd, db)
-        await asyncio.get_event_loop().run_in_executor(None, import_gigafactory, db)
-        await asyncio.get_event_loop().run_in_executor(None, import_pitchbook, db)
-    finally:
-        db.close()
+        db = SessionLocal()
+        try:
+            await asyncio.get_event_loop().run_in_executor(None, import_naatbatt, db, force)
+            await asyncio.get_event_loop().run_in_executor(None, import_bbd, db)
+            await asyncio.get_event_loop().run_in_executor(None, import_gigafactory, db)
+            await asyncio.get_event_loop().run_in_executor(None, import_pitchbook, db)
+        finally:
+            db.close()
 
 
 async def _auto_seed():
