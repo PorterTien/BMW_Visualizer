@@ -609,25 +609,7 @@ def company_detail(company_id: int, db: Session = Depends(get_db)):
         .all()
     ]
 
-    # All proceedings
-    data["proceedings"] = [
-        {
-            "id": p.id,
-            "title": p.title,
-            "event_name": p.event_name,
-            "event_date": p.event_date,
-            "location": p.location,
-            "authors": json.loads(p.authors or "[]"),
-            "technologies": json.loads(p.technologies or "[]"),
-            "partners_mentioned": json.loads(p.partners_mentioned or "[]"),
-            "results_summary": p.results_summary,
-            "source_type": p.source_type,
-            "source_url": p.source_url,
-        }
-        for p in db.query(NewsHeadline)
-        .filter(NewsHeadline.company_id == company_id)
-        .all()
-    ]
+    data["proceedings"] = []
 
     # Metrics
     metrics = db.query(CompanyMetric).filter(

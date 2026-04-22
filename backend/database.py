@@ -61,9 +61,24 @@ def migrate_db():
         ("logo_url", "TEXT"),
         ("manual_overrides", "TEXT"),
     ]
+    dialect = engine.dialect.name
     with engine.connect() as conn:
-        existing = {row[1] for row in conn.execute(text("PRAGMA table_info(companies)"))}
-        for col, col_type in new_columns:
-            if col not in existing:
-                conn.execute(text(f"ALTER TABLE companies ADD COLUMN {col} {col_type}"))
-                conn.commit()
+        if dialect == "sqlite":
+            existing = {row[1] for row in conn.execute(text("PRAGMA table_info(companies)"))}
+            for col, col_type in new_columns:
+                if col not in existing:
+                    conn.execute(text(f"ALTER TABLE companies ADD COLUMN {col} {col_type}"))
+                    conn.commit()
+        elif dialect == "postgresql":
+            existing = {
+                row[0] for row in conn.execute(text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = 'companies'"
+                ))
+            }
+            pg_type_map = {"REAL": "DOUBLE PRECISION", "INTEGER": "INTEGER", "TEXT": "TEXT"}
+            for col, col_type in new_columns:
+                if col not in existing:
+                    pg_type = pg_type_map.get(col_type, "TEXT")
+                    conn.execute(text(f"ALTER TABLE companies ADD COLUMN {col} {pg_type}"))
+                    conn.commit()
