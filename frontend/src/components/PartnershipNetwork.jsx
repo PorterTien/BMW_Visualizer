@@ -407,8 +407,6 @@ function PartnershipNetwork({ onSelectCompany }) {
   scaleMetricRef.current = scaleMetric
   const maxValuesRef = useRef(maxValues)
   maxValuesRef.current = maxValues
-  const linkCountsRef = useRef({})   // populated after displayGraph is computed below
-
   // Detect unknowns for auto-classify nudge
   const unknownCount = useMemo(() => {
     const unknownNodes = graphData.nodes.filter(n => !n.type || n.type === 'other').length
