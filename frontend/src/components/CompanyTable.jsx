@@ -551,10 +551,10 @@ export default function CompanyTable({ filters, onOpenCompany }) {
         <span className="mx-1 text-gray-400">|</span>
         <span>Go To</span>
         <input
-          type="number"
-          min={1}
-          max={totalPages}
-          className="w-16 border border-bmw-border rounded px-1.5 py-0.5 text-xs bg-white"
+          type="text"
+          inputMode="numeric"
+          pattern="[0-9]*"
+          className="w-20 border border-bmw-border rounded px-1.5 py-0.5 text-xs bg-white"
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
               const v = Math.max(1, Math.min(totalPages, Number(e.target.value)))
