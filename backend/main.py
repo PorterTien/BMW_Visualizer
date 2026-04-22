@@ -111,7 +111,7 @@ def sync_status(db: Session = Depends(get_db)):
 
 
 @app.post("/api/sync/naatbatt")
-def trigger_naatbatt_sync():
+async def trigger_naatbatt_sync():
     t = asyncio.create_task(_run_seed(True))
     t.add_done_callback(_log_task_error)
     return {"status": "sync_started"}
@@ -119,7 +119,7 @@ def trigger_naatbatt_sync():
 
 # Seed endpoints
 @app.post("/api/seed")
-def trigger_seed():
+async def trigger_seed():
     t = asyncio.create_task(_run_seed(False))
     t.add_done_callback(_log_task_error)
     return {"status": "seed_started"}
