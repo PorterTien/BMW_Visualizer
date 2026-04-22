@@ -235,7 +235,7 @@ export default function WatchlistPanel({ onOpenCompany }) {
   const [orderedIds, setOrderedIds] = useState([])   // user-dragged order
   const [companyDetail, setCompanyDetail] = useState(null)
   const [detailLoading, setDetailLoading] = useState(false)
-  const [infoWidth, setInfoWidth] = useState(288)   // px — default 288 (w-72)
+  const [infoWidth, setInfoWidth] = useState(() => Math.max(220, Math.floor((window.innerWidth - 224) / 2)))
   const resizingRef = useRef(false)
   const resizeStartRef = useRef({ x: 0, w: 0 })
 
@@ -421,6 +421,7 @@ export default function WatchlistPanel({ onOpenCompany }) {
 
                     <div className="flex items-center gap-2 min-w-0 flex-1">
                       {hasBreaking && <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse flex-shrink-0" />}
+                      <CompanyFavicon website={company.company_website} name={company.company_name} size={7} />
                       <div className="min-w-0">
                         <div className={`text-sm font-medium truncate ${isSelected ? 'text-bmw-blue' : 'text-gray-800'}`}>
                           {company.company_name}

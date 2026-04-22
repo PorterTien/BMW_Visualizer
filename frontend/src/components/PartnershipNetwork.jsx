@@ -82,16 +82,19 @@ function typeColors(type, isDark, name = '') {
   return hashColor(name || type || 'x')
 }
 
-function nodeRadius(node, metric, maxValues) {
-  if (node._investorList) return 46  // investor meta-node: fixed prominent size
-  if (node.in_db === false) return 12
+function nodeRadius(node, metric, maxValues, linkCounts) {
+  if (node._investorList) return 46
+  if (node.in_db === false) return 10
   const v = node[metric]
   if (v != null && v > 0 && maxValues[metric]) {
     const ratio = v / maxValues[metric]
-    return Math.max(16, Math.min(44, 16 + Math.sqrt(ratio) * 28))
+    return Math.max(12, Math.min(44, 12 + Math.sqrt(ratio) * 32))
   }
-  const pct = node.percentile || 20
-  return Math.max(16, Math.min(30, 16 + (pct / 100) * 14))
+  // Fall back to partnership count — more connected = larger bubble
+  const maxLinks = (linkCounts?.__max) || 1
+  const myLinks = (linkCounts?.[node.id]) || 1
+  const ratio = myLinks / maxLinks
+  return Math.max(10, Math.min(36, 10 + Math.sqrt(ratio) * 26))
 }
 
 function linkColor(type, date, isDark) {
@@ -202,10 +205,19 @@ function PartnershipNetwork({ onSelectCompany }) {
     import('react-force-graph-2d').then((m) => setFG(() => m.default))
   }, [])
 
-  // Fetch data
+  // Fetch data then auto-classify if any unknowns exist
   useEffect(() => {
     getPartnershipGraph()
-      .then(({ data }) => setGraphData(data))
+      .then(({ data }) => {
+        setGraphData(data)
+        const hasUnknowns =
+          data.nodes.some(n => !n.type || n.type === 'other') ||
+          data.links.some(l => !l.type || l.type === 'other')
+        if (hasUnknowns) {
+          // Delay slightly so the graph renders first
+          setTimeout(() => handleClassify(), 1200)
+        }
+      })
       .catch((err) => {
         console.error('Failed to load partnership graph, falling back to legacy:', err)
         getCompaniesNetwork()
@@ -213,7 +225,7 @@ function PartnershipNetwork({ onSelectCompany }) {
           .catch(console.error)
       })
       .finally(() => setLoading(false))
-  }, [])
+  }, [handleClassify])
 
   // Resize observer — must re-run when FG/loading change so containerRef is populated
   useEffect(() => {
@@ -236,7 +248,7 @@ function PartnershipNetwork({ onSelectCompany }) {
       fg.d3Force('link')?.distance(180).strength(0.2)
       fg.d3Force('y', null) // remove any leftover Y force
       fg.d3Force('collide', forceCollide(n => {
-        return nodeRadius(n, scaleMetricRef.current, maxValuesRef.current) + 6
+        return nodeRadius(n, scaleMetricRef.current, maxValuesRef.current, linkCountsRef.current) + 6
       }).strength(1).iterations(8))
     }, 100)
     return () => clearTimeout(t)
@@ -298,12 +310,13 @@ function PartnershipNetwork({ onSelectCompany }) {
     const maxVals = maxValuesRef.current
     const ax = nodeStartX + translate.x   // dragged node centre (translate is cumulative)
     const ay = nodeStartY + translate.y
-    const draggedR = nodeRadius(node, metric, maxVals)
+    const lc = linkCountsRef.current
+    const draggedR = nodeRadius(node, metric, maxVals, lc)
 
     displayGraphRef.current.nodes.forEach(n => {
       if (n.id === node.id) return
 
-      const nR = nodeRadius(n, metric, maxVals)
+      const nR = nodeRadius(n, metric, maxVals, lc)
       const minSep = draggedR + nR + 2   // hard boundary: sum of radii + small gap
 
       // Current position (may have been pushed by a previous drag tick)
@@ -389,11 +402,26 @@ function PartnershipNetwork({ onSelectCompany }) {
     return max
   }, [graphData.nodes])
 
+  // Link counts per node — used as fallback scaling when no financial metric data exists
+  const linkCounts = useMemo(() => {
+    const counts = {}
+    displayGraph.links.forEach(l => {
+      const s = typeof l.source === 'object' ? l.source.id : l.source
+      const t = typeof l.target === 'object' ? l.target.id : l.target
+      counts[s] = (counts[s] || 0) + 1
+      counts[t] = (counts[t] || 0) + 1
+    })
+    counts.__max = Math.max(1, ...Object.values(counts).filter(v => typeof v === 'number'))
+    return counts
+  }, [displayGraph.links])
+
   // Stable refs so drag handler and forceCollide always see current values without dep churn
   const scaleMetricRef = useRef(scaleMetric)
   scaleMetricRef.current = scaleMetric
   const maxValuesRef = useRef(maxValues)
   maxValuesRef.current = maxValues
+  const linkCountsRef = useRef(linkCounts)
+  linkCountsRef.current = linkCounts
 
   // Detect unknowns for auto-classify nudge
   const unknownCount = useMemo(() => {
@@ -568,7 +596,7 @@ function PartnershipNetwork({ onSelectCompany }) {
   /* ── Canvas: node ── */
   const paintNode = useCallback((node, ctx, globalScale) => {
     if (node.x == null || node.y == null) return
-    const r = nodeRadius(node, scaleMetric, maxValues)
+    const r = nodeRadius(node, scaleMetric, maxValues, linkCounts)
     const { fill, border } = node.in_db === false
       ? hashColor(node.name || node.id || 'x')
       : typeColors(node.type, dark, node.name || '')
@@ -625,7 +653,7 @@ function PartnershipNetwork({ onSelectCompany }) {
       : ((isHov || isClicked) ? '#0F172A' : '#374151')
     ctx.fillText(label, node.x, ty)
     ctx.textBaseline = 'alphabetic'
-  }, [searchQuery, scaleMetric, dark, maxValues])  // hoveredNode + clickedNode read via refs — no re-ticking
+  }, [searchQuery, scaleMetric, dark, maxValues, linkCounts])  // hoveredNode + clickedNode read via refs — no re-ticking
 
   /* ── Canvas: link ── */
   const paintLink = useCallback((link, ctx, globalScale) => {
@@ -654,7 +682,7 @@ function PartnershipNetwork({ onSelectCompany }) {
     const dir = link.direction || 'bidirectional'
     const drawArrow = (fromX, fromY, toX, toY, targetNode) => {
       const angle = Math.atan2(toY - fromY, toX - fromX)
-      const tr = nodeRadius(targetNode, scaleMetric, maxValues) + 2
+      const tr = nodeRadius(targetNode, scaleMetric, maxValues, linkCounts) + 2
       const ax = toX - Math.cos(angle) * tr
       const ay = toY - Math.sin(angle) * tr
       const al = Math.max(3.5, 6 / globalScale)
@@ -675,15 +703,15 @@ function PartnershipNetwork({ onSelectCompany }) {
     }
 
     ctx.globalAlpha = 1
-  }, [scaleMetric, dark, maxValues])
+  }, [scaleMetric, dark, maxValues, linkCounts])
 
   /* ── Hit area ── */
   const pointerArea = useCallback((node, color, ctx) => {
     if (node.x == null || node.y == null) return
-    const r = nodeRadius(node, scaleMetric, maxValues) + 4
+    const r = nodeRadius(node, scaleMetric, maxValues, linkCounts) + 4
     ctx.beginPath(); ctx.arc(node.x, node.y, r, 0, Math.PI * 2)
     ctx.fillStyle = color; ctx.fill()
-  }, [scaleMetric, maxValues])
+  }, [scaleMetric, maxValues, linkCounts])
 
   /* ── Loading / empty ── */
   if (loading || !FG) {
@@ -869,23 +897,6 @@ function PartnershipNetwork({ onSelectCompany }) {
             >−</button>
           </div>
 
-          {/* Pan mode toggle */}
-          <button
-            onClick={() => setPanMode(p => !p)}
-            title={panMode ? 'Switch to node-drag mode' : 'Switch to pan/drag mode'}
-            className={`text-xs px-3 py-1.5 rounded border transition-colors flex items-center gap-1.5 ${
-              panMode
-                ? (dark ? 'bg-blue-600 text-white border-blue-600' : 'bg-bmw-blue text-white border-bmw-blue')
-                : (dark ? 'border-gray-600 text-gray-400 hover:border-blue-500' : 'border-bmw-border text-gray-600 hover:border-bmw-blue')
-            }`}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/>
-              <polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/>
-              <line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/>
-            </svg>
-            Pan
-          </button>
 
           {/* Classify All button */}
           <button

@@ -35,6 +35,7 @@ def list_watchlist(db: Session = Depends(get_db)):
                 "company_status": c.company_status,
                 "company_hq_country": c.company_hq_country,
                 "funding_status": c.funding_status,
+                "company_website": c.company_website,
                 "added_at": e.added_at,
             })
     return result

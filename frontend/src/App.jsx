@@ -20,6 +20,26 @@ export default function App() {
   const [dataImportOpen, setDataImportOpen] = useState(false)
   const seedPollRef = useRef(null)
 
+  // Resizable company detail panel
+  const [panelWidth, setPanelWidth] = useState(700)
+  const panelResizeRef = useRef({ active: false, startX: 0, startW: 0 })
+  const startPanelResize = useCallback((e) => {
+    e.preventDefault()
+    panelResizeRef.current = { active: true, startX: e.clientX, startW: panelWidth }
+    const onMove = (ev) => {
+      if (!panelResizeRef.current.active) return
+      const delta = panelResizeRef.current.startX - ev.clientX
+      setPanelWidth(Math.max(400, Math.min(window.innerWidth - 120, panelResizeRef.current.startW + delta)))
+    }
+    const onUp = () => {
+      panelResizeRef.current.active = false
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }, [panelWidth])
+
   const [watchlistBreaking, setWatchlistBreaking] = useState(0)
 
   // Poll for breaking news count to show badge in navbar
@@ -117,7 +137,18 @@ export default function App() {
           {/* Backdrop — click to close */}
           <div className="flex-1 bg-black/20" onClick={handleCloseCompanyPage} />
           {/* Panel */}
-          <div className="w-[700px] bg-white shadow-2xl flex flex-col overflow-hidden border-l border-gray-200 animate-slide-in-right">
+          <div
+            style={{ width: panelWidth }}
+            className="relative bg-white shadow-2xl flex flex-col overflow-hidden border-l border-gray-200 animate-slide-in-right shrink-0"
+          >
+            {/* Drag handle — left edge */}
+            <div
+              onMouseDown={startPanelResize}
+              className="absolute left-0 top-0 w-1.5 h-full cursor-col-resize z-20 group"
+              title="Drag to resize"
+            >
+              <div className="w-full h-full bg-transparent group-hover:bg-bmw-blue/25 transition-colors" />
+            </div>
             <CompanyDetailPage
               key={detailCompanyId}
               companyId={detailCompanyId}

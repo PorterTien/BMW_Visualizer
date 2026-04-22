@@ -99,6 +99,29 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany, d
   const [notesSaved, setNotesSaved] = useState(false)
   const chatBottomRef = useRef(null)
   const pollRef = useRef(null)
+  const scrollRef = useRef(null)
+  const sectionRefs = useRef({})
+
+  const handleScroll = useCallback(() => {
+    const container = scrollRef.current
+    if (!container) return
+    const scrollTop = container.scrollTop
+    const ids = ['overview', 'facilities', 'partnerships', 'news', 'ai', 'similar', 'citations']
+    let current = ids[0]
+    for (const id of ids) {
+      const el = sectionRefs.current[id]
+      if (el && el.offsetTop - 100 <= scrollTop) current = id
+    }
+    setActiveSection(current)
+  }, [])
+
+  const scrollToSection = useCallback((id) => {
+    const el = sectionRefs.current[id]
+    if (el && scrollRef.current) {
+      scrollRef.current.scrollTo({ top: el.offsetTop - 8, behavior: 'smooth' })
+    }
+    setActiveSection(id)
+  }, [])
 
   useEffect(() => () => clearInterval(pollRef.current), [])
   useEffect(() => {
@@ -297,7 +320,7 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany, d
         {sections.map((s) => (
           <button
             key={s.id}
-            onClick={() => setActiveSection(s.id)}
+            onClick={() => scrollToSection(s.id)}
             className={`px-4 py-2.5 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${
               activeSection === s.id
                 ? 'text-bmw-blue border-bmw-blue'
@@ -310,11 +333,12 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany, d
       </div>
 
       {/* ── Content ── */}
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-6xl mx-auto px-6 py-6">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto" onScroll={handleScroll}>
+        <div className="max-w-6xl mx-auto px-6 py-6 space-y-12">
 
           {/* OVERVIEW */}
-          {activeSection === 'overview' && (
+          <div ref={el => { sectionRefs.current['overview'] = el }}>
+            <SectionDivider title="Overview" />
             <div className="space-y-6">
               {/* Edit toolbar */}
               <div className="flex items-center justify-between">
@@ -551,10 +575,11 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany, d
                 </Section>
               )}
             </div>
-          )}
+          </div>
 
           {/* FACILITIES */}
-          {activeSection === 'facilities' && (
+          <div ref={el => { sectionRefs.current['facilities'] = el }}>
+            <SectionDivider title={`Facilities (${(company.facilities || []).length})`} />
             <div className="space-y-3">
               {(company.facilities || []).length === 0 ? (
                 <EmptyState text="No facility data available" />
@@ -591,10 +616,11 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany, d
                 ))
               )}
             </div>
-          )}
+          </div>
 
           {/* PARTNERSHIPS */}
-          {activeSection === 'partnerships' && (
+          <div ref={el => { sectionRefs.current['partnerships'] = el }}>
+            <SectionDivider title={`Partnerships (${allPartnerships.length})`} />
             <div className="space-y-3">
               {allPartnerships.length === 0 ? (
                 <EmptyState text="No partnership data available" />
@@ -668,10 +694,11 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany, d
                 ))
               )}
             </div>
-          )}
+          </div>
 
           {/* NEWS */}
-          {activeSection === 'news' && (
+          <div ref={el => { sectionRefs.current['news'] = el }}>
+            <SectionDivider title={`News (${(company.news || []).length})`} />
             <div className="space-y-3">
               {(company.news || []).length === 0 ? (
                 <EmptyState text="No news articles available" />
@@ -703,10 +730,11 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany, d
                 ))
               )}
             </div>
-          )}
+          </div>
 
           {/* AI CHAT */}
-          {activeSection === 'ai' && (
+          <div ref={el => { sectionRefs.current['ai'] = el }}>
+            <SectionDivider title="AI Chat" />
             <div className="space-y-4 max-w-2xl">
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-medium text-gray-500 uppercase">Ask AI about {company.company_name}</h3>
@@ -763,10 +791,11 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany, d
                 </button>
               </div>
             </div>
-          )}
+          </div>
 
           {/* SIMILAR COMPANIES */}
-          {activeSection === 'similar' && (
+          <div ref={el => { sectionRefs.current['similar'] = el }}>
+            <SectionDivider title="Similar Companies" />
             <div className="space-y-3">
               {(company.similar_companies || []).length === 0 ? (
                 <EmptyState text="No similar companies found" />
@@ -791,10 +820,11 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany, d
                 </div>
               )}
             </div>
-          )}
+          </div>
 
           {/* CITATIONS */}
-          {activeSection === 'citations' && (
+          <div ref={el => { sectionRefs.current['citations'] = el }}>
+            <SectionDivider title="Citations" />
             <div className="space-y-2">
               <p className="text-sm text-gray-500 mb-4">
                 All data sources used to compile this company's information:
@@ -818,7 +848,7 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany, d
                 </div>
               )}
             </div>
-          )}
+          </div>
 
         </div>
       </div>
@@ -828,6 +858,14 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany, d
 
 /* ── Helper components ── */
 
+function SectionDivider({ title }) {
+  return (
+    <div className="flex items-center gap-3 mb-5">
+      <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-widest whitespace-nowrap">{title}</h2>
+      <div className="flex-1 h-px bg-gray-200" />
+    </div>
+  )
+}
 
 function InfoCard({ label, value }) {
   if (!value) return null
