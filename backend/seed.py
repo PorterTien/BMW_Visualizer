@@ -6,6 +6,7 @@ Or call import_naatbatt(db, force=True) from routes.
 from __future__ import annotations
 
 import hashlib
+import re
 import json
 import logging
 import os
@@ -22,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from backend.config import NAATBATT_LOCAL_PATH, NAATBATT_URL, VALID_COUNTRIES
 from backend.database import SessionLocal, init_db
-from backend.models import Company, SyncLog
+from backend.models import Company, Partnership, PartnershipMember, SyncLog
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
 log = logging.getLogger(__name__)
@@ -609,6 +610,180 @@ def import_gigafactory(db) -> dict:
     return {"status": "success", "rows_added": added, "rows_updated": updated}
 
 
+PITCHBOOK_LOCAL_PATH = str(_PROJECT_ROOT / "data" / "PitchBook_All_Columns_2026_04_08_17_33_23.xlsx")
+
+_TICKER_RE = re.compile(r'\s*\([A-Z]{2,5}:\s*[A-Z0-9.]+\)')
+_PERSON_RE  = re.compile(r'\s*\([^)]{3,60}\)')
+
+def _pb_clean_name(raw: str) -> str | None:
+    if not raw or str(raw).strip() in ('nan', ''):
+        return None
+    s = _TICKER_RE.sub('', str(raw))
+    s = _PERSON_RE.sub('', s)
+    s = s.strip().strip(',').strip()
+    return s or None
+
+_PB_DEAL_TYPE_MAP = {
+    'PIPE': 'equity_stake',
+    'Merger/Acquisition': 'equity_stake',
+    'Buyout/LBO': 'equity_stake',
+    'Secondary Transaction - Open Market': 'equity_stake',
+    'Secondary Transaction - Private': 'equity_stake',
+    'Public Investment 2nd Offering': 'equity_stake',
+    'IPO': 'equity_stake',
+}
+
+def import_pitchbook(db) -> dict:
+    """Import PitchBook deal data: enriches companies and creates equity partnerships."""
+    path = Path(PITCHBOOK_LOCAL_PATH)
+    if not path.exists():
+        log.warning("PitchBook file not found at %s — skipping.", path)
+        return {"status": "skipped", "rows_added": 0, "partnerships_added": 0}
+
+    log.info("Importing PitchBook data from %s …", path)
+    df = pd.read_excel(path, sheet_name="Data", header=7, dtype=str)
+
+    now = datetime.now(timezone.utc).isoformat()
+    companies_updated = 0
+    partnerships_added = 0
+
+    # Build a case-insensitive name lookup for existing companies
+    all_companies = {c.company_name.lower(): c for c in db.query(Company).all()}
+
+    def find_or_create_company(name: str, is_investor: bool = False) -> Company | None:
+        key = name.lower()
+        if key in all_companies:
+            return all_companies[key]
+        # Create a minimal record
+        c = Company(
+            company_name=name,
+            data_source="pitchbook_xlsx",
+            last_updated=now,
+            industry_segment="other" if is_investor else None,
+        )
+        db.add(c)
+        db.flush()  # get the id
+        all_companies[key] = c
+        return c
+
+    for _, row in df.iterrows():
+        raw_company = str(row.get('Companies', '') or '')
+        company_name = _pb_clean_name(raw_company)
+        if not company_name:
+            continue
+
+        # Enrich existing company with financial data
+        existing = all_companies.get(company_name.lower())
+        if existing:
+            try:
+                rev = float(row.get('Revenue') or 0) or None
+                if rev and not existing.revenue_usd:
+                    existing.revenue_usd = rev
+                emp = str(row.get('Current Employees') or '').strip()
+                if emp and emp not in ('nan', '') and not existing.number_of_employees:
+                    try:
+                        existing.number_of_employees = int(float(emp))
+                    except (ValueError, TypeError):
+                        pass
+                desc = str(row.get('Description') or '').strip()
+                if desc and desc != 'nan' and not existing.summary:
+                    existing.summary = desc[:2000]
+            except (ValueError, TypeError):
+                pass
+            companies_updated += 1
+
+        # Only create partnerships for deals that have investors listed
+        raw_investors = str(row.get('Investors') or '').strip()
+        if not raw_investors or raw_investors == 'nan':
+            continue
+
+        deal_type = str(row.get('Deal Type') or '').strip()
+        p_type = _PB_DEAL_TYPE_MAP.get(deal_type, 'other')
+
+        raw_size = row.get('Deal Size')
+        try:
+            deal_value = float(raw_size) if raw_size and str(raw_size) != 'nan' else None
+        except (ValueError, TypeError):
+            deal_value = None
+
+        raw_date = row.get('Announced Date') or row.get('Deal Date')
+        date_str = None
+        if raw_date and str(raw_date) not in ('nan', 'NaT'):
+            try:
+                import pandas as _pd
+                ts = _pd.Timestamp(raw_date)
+                date_str = ts.strftime('%Y-%m-%d')
+            except Exception:
+                pass
+
+        synopsis = str(row.get('Deal Synopsis') or '').strip()
+        scope = synopsis[:500] if synopsis and synopsis != 'nan' else None
+
+        # Parse investors (comma-separated)
+        investor_names = [
+            _pb_clean_name(part)
+            for part in raw_investors.split(',')
+        ]
+        investor_names = [n for n in investor_names if n]
+        if not investor_names:
+            continue
+
+        # Get/create the battery company node
+        battery_co = find_or_create_company(company_name, is_investor=False)
+        if not battery_co:
+            continue
+
+        # Create one partnership per investor
+        for inv_name in investor_names:
+            investor_co = find_or_create_company(inv_name, is_investor=True)
+            if not investor_co or investor_co.id == battery_co.id:
+                continue
+
+            # Deduplicate: skip if this pair + type already exists
+            existing_p = (
+                db.query(Partnership)
+                .join(PartnershipMember, Partnership.id == PartnershipMember.partnership_id)
+                .filter(
+                    Partnership.partnership_type == p_type,
+                    Partnership.date_announced == date_str,
+                    PartnershipMember.company_id == battery_co.id,
+                )
+                .first()
+            )
+            if existing_p:
+                continue
+
+            p = Partnership(
+                partnership_name=f"{inv_name} → {company_name}",
+                partnership_type=p_type,
+                stage='active',
+                direction='investor_to_investee',
+                date_announced=date_str,
+                deal_value=deal_value,
+                scope=scope,
+                source_name='PitchBook',
+                created_at=now,
+                updated_at=now,
+            )
+            db.add(p)
+            db.flush()
+
+            db.add(PartnershipMember(partnership_id=p.id, company_id=investor_co.id, role='investor'))
+            db.add(PartnershipMember(partnership_id=p.id, company_id=battery_co.id, role='investee'))
+            partnerships_added += 1
+
+    db.commit()
+    log.info("PitchBook import complete: %d companies enriched, %d partnerships added",
+             companies_updated, partnerships_added)
+    db.add(SyncLog(
+        source="pitchbook_xlsx", status="success",
+        rows_added=partnerships_added, rows_updated=companies_updated,
+        run_at=now,
+    ))
+    db.commit()
+    return {"status": "success", "companies_updated": companies_updated, "partnerships_added": partnerships_added}
+
+
 if __name__ == "__main__":
     init_db()
     db = SessionLocal()
@@ -622,6 +797,8 @@ if __name__ == "__main__":
             log.info("BBD seed result: %s", result)
             result = import_gigafactory(db)
             log.info("Gigafactory seed result: %s", result)
+            result = import_pitchbook(db)
+            log.info("PitchBook seed result: %s", result)
         else:
             log.info("DB already has %d companies — skipping seed.", count)
     finally:

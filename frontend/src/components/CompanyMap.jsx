@@ -11,6 +11,12 @@ const DARK_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">Open
 
 const SPLIT_ZOOM = 8
 
+const COUNTRY_ALIASES = {
+  'United States': ['united states', 'us'],
+  'United Kingdom': ['united kingdom', 'uk'],
+  'South Korea': ['south korea', 'republic of korea'],
+}
+
 const TYPE_COLORS = {
   'Raw Materials': '#F59E0B',
   'Battery Grade Materials': '#EAB308',
@@ -191,16 +197,17 @@ export default function CompanyMap({ filters, onSelectCompany, highlightName }) 
       const q = filters.search.toLowerCase()
       if (!c.company_name?.toLowerCase().includes(q)) return false
     }
-    if (filters.types.length && !filters.types.includes(c.company_type)) return false
     if (filters.statuses.length && !filters.statuses.includes(c.company_status)) return false
-    if (filters.segments.length && !filters.segments.includes(c.supply_chain_segment)) return false
+    if (filters.segments.length) {
+      const segs = (c.supply_chain_segment || '').split(' | ')
+      if (!filters.segments.some((seg) => segs.includes(seg))) return false
+    }
     if (filters.countries.length) {
-      const facCountry = c.facility_country?.trim().toUpperCase() || ''
-      const hqCountry = c.company_hq_country?.trim().toUpperCase() || ''
+      const hq = (c.company_hq_country || '').trim().toLowerCase()
+      const fac = (c.facility_country || '').trim().toLowerCase()
       const matched = filters.countries.some((co) => {
-        const countryUpper = co.toUpperCase()
-        return facCountry === countryUpper || hqCountry === countryUpper || 
-               facCountry.includes(countryUpper) || hqCountry.includes(countryUpper)
+        const aliases = COUNTRY_ALIASES[co] || [co.toLowerCase()]
+        return aliases.includes(hq) || aliases.includes(fac)
       })
       if (!matched) return false
     }
@@ -222,16 +229,19 @@ export default function CompanyMap({ filters, onSelectCompany, highlightName }) 
         zoom={4}
         style={{ height: '100%', width: '100%' }}
         worldCopyJump={false}
+        maxBounds={[[-90, -180], [90, 180]]}
+        maxBoundsViscosity={1.0}
         zoomAnimation={true}
         zoomAnimationThreshold={4}
         wheelPxPerZoomLevel={120}
         wheelDebounceTime={80}
-        minZoom={1}
+        minZoom={2}
       >
         <TileLayer
           key="light"
           attribution={LIGHT_ATTR}
           url={LIGHT_TILES}
+          noWrap={true}
         />
 
         {heatmapMode ? (

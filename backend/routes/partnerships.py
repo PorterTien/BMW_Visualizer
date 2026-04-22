@@ -91,6 +91,14 @@ def _partnership_dict(p: Partnership, db: Session, company_map: dict[int, Compan
 
 # ── Partnership CRUD ────────────────────────────────────────────────────────
 
+@router.post("/partnerships/import-pitchbook")
+def import_pitchbook_endpoint(db: Session = Depends(get_db)):
+    """One-shot: load PitchBook Excel from the local /data directory into the DB."""
+    from backend.seed import import_pitchbook
+    result = import_pitchbook(db)
+    return result
+
+
 @router.get("/partnerships")
 def list_partnerships(
     partnership_type: str | None = None,

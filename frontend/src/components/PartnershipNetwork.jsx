@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
+import { useEffect, useState, useRef, useCallback, useMemo, memo } from 'react'
 import { getPartnershipGraph, getCompaniesNetwork, enrichPartnershipNetwork, getJob } from '../api/client'
 
 /* ── Constants ── */
@@ -82,17 +82,15 @@ function typeColors(type, isDark, name = '') {
 }
 
 function nodeRadius(node, metric, maxValues) {
-  if (node._investorList) return 28  // investor meta-node: fixed prominent size
-  if (node.in_db === false) return 5
+  if (node._investorList) return 46  // investor meta-node: fixed prominent size
+  if (node.in_db === false) return 12
   const v = node[metric]
   if (v != null && v > 0 && maxValues[metric]) {
-    // Scale radius between 6 and 40 based on value relative to max
     const ratio = v / maxValues[metric]
-    return Math.max(6, Math.min(40, 6 + Math.sqrt(ratio) * 34))
+    return Math.max(16, Math.min(44, 16 + Math.sqrt(ratio) * 28))
   }
-  // Approximate using percentile
   const pct = node.percentile || 20
-  return Math.max(5, Math.min(20, 5 + (pct / 100) * 15))
+  return Math.max(16, Math.min(30, 16 + (pct / 100) * 14))
 }
 
 function linkColor(type, date, isDark) {
@@ -120,7 +118,7 @@ function fmtVal(v) {
 
 /* ── Component ── */
 
-export default function PartnershipNetwork({ onSelectCompany }) {
+function PartnershipNetwork({ onSelectCompany }) {
   const dark = false
   const [graphData, setGraphData] = useState({ nodes: [], links: [] })
   const [loading, setLoading] = useState(true)
@@ -129,21 +127,25 @@ export default function PartnershipNetwork({ onSelectCompany }) {
   const fgRef = useRef(null)
   const [dims, setDims] = useState({ w: 800, h: 600 })
   const fitDoneRef = useRef(false)
+  const zoomLevelRef = useRef(1)
+  const rafRef = useRef(null)
+  const displayGraphRef = useRef({ nodes: [], links: [] })
+  const draggingRef = useRef(null)          // { id, nodeMap, connected: { id: {x,y} } }
+
 
   // Controls
   const [searchQuery, setSearchQuery] = useState('')
   const [scaleMetric, setScaleMetric] = useState('employee_count')
-  const [panMode, setPanMode] = useState(false)   // when true: drag pans canvas; nodes not moveable
+  const [panMode, setPanMode] = useState(false)   // default: node drag enabled; toggle for pan-only mode
   // hoveredNodeRef: used inside canvas paintNode callback (stable ref, no re-render)
   // tooltipSetterRef: imperative channel to HoverTooltip — avoids triggering parent re-renders on hover
   const hoveredNodeRef = useRef(null)
   const tooltipSetterRef = useRef(null)
   const clickedNodeRef = useRef(null)   // mirrors clickedNode state for canvas use
 
-  // Clicked-node detail panel
-  const [clickedNode, setClickedNode] = useState(null)
-  // Keep ref in sync so paintNode can read it without being in the deps array
-  clickedNodeRef.current = clickedNode
+  // Clicked-node: store only the ID (never store the mutable D3 node object in state)
+  const [clickedNodeId, setClickedNodeId] = useState(null)
+  clickedNodeRef.current = clickedNodeId
 
   // Clicked-link detail panel
   const [clickedLink, setClickedLink] = useState(null)
@@ -192,6 +194,7 @@ export default function PartnershipNetwork({ onSelectCompany }) {
   }, [])
 
   useEffect(() => () => clearInterval(classifyPollRef.current), [])
+  useEffect(() => () => { if (rafRef.current) cancelAnimationFrame(rafRef.current) }, [])
 
   // Lazy-load react-force-graph-2d
   useEffect(() => {
@@ -222,36 +225,161 @@ export default function PartnershipNetwork({ onSelectCompany }) {
     return () => obs.disconnect()
   }, [FG, loading])
 
-  // Re-fit whenever the container is resized
-  useEffect(() => {
-    const t = setTimeout(() => fgRef.current?.zoomToFit(400, 60), 200)
-    return () => clearTimeout(t)
-  }, [dims])
-
-  // Configure forces with hierarchical bias — only runs when FG or graphData changes, not on resize
+  // Configure forces — only runs when FG or graphData changes, not on resize
   useEffect(() => {
     const fg = fgRef.current
     if (!fg) return
     const t = setTimeout(() => {
-      fg.d3Force('charge')?.strength(-300).distanceMax(500)
-      fg.d3Force('center')?.strength(0.08)
-      fg.d3Force('link')?.distance(80).strength(0.4)
-
-      // Add vertical gravity bias for supply chain hierarchy
-      try {
-        import('d3-force').then(d3 => {
-          const h = containerRef.current?.clientHeight || 600
-          fg.d3Force('y', d3.forceY((node) => {
-            const order = HIERARCHY_ORDER[node.type] ?? 3
-            return (order / 5) * h * 0.5
-          }).strength(0.04))
-        })
-      } catch (_) {}
+      fg.d3Force('charge')?.strength(-400)
+      fg.d3Force('center')?.strength(0.02)
+      fg.d3Force('link')?.distance(180).strength(0.2)
+      fg.d3Force('y', null) // remove any leftover Y force
+      import('d3-force').then(d3 => {
+        fg.d3Force('collide', d3.forceCollide(n => {
+          // Match visual radius exactly so the simulation treats nodes as solid balls
+          return nodeRadius(n, scaleMetricRef.current, maxValuesRef.current) + 6
+        }).strength(1).iterations(8))
+      })
     }, 100)
     return () => clearTimeout(t)
   }, [FG, graphData])
 
   useEffect(() => { fgRef.current?.refresh() }, [dark])
+
+  const handleNodeClick = useCallback((node) => {
+    // Defer state updates so D3 can finish processing its click event first
+    setTimeout(() => {
+      if (node.id === INVESTOR_META_ID) {
+        setInvestorGroup(node._investorList || [])
+        setInvestorPanelOpen(true)
+        setClickedNodeId(null)
+        clickedNodeRef.current = null
+        setClickedLink(null)
+      } else {
+        setClickedNodeId(node.id)
+        clickedNodeRef.current = node.id
+        setClickedLink(null)
+        setInvestorPanelOpen(false)
+        if (node.in_db !== false) {
+          onSelectCompany?.(node.id)
+        }
+      }
+    }, 0)
+  }, [onSelectCompany])
+
+  const handleLinkClick = useCallback((link) => {
+    setTimeout(() => {
+      setClickedLink(link)
+      setClickedNodeId(null)
+      clickedNodeRef.current = null
+      setInvestorPanelOpen(false)
+    }, 0)
+  }, [])
+
+  const MAX_EDGE_LENGTH = 320  // graph-space units; edge clamps here and neighbour follows
+
+  const handleNodeDrag = useCallback((node, translate) => {
+    // First tick of a new drag: snapshot every node's start position and build connected set
+    if (draggingRef.current?.id !== node.id) {
+      const connected = new Set()
+      displayGraphRef.current.links.forEach(l => {
+        const s = typeof l.source === 'object' ? l.source.id : l.source
+        const t = typeof l.target === 'object' ? l.target.id : l.target
+        if (s === node.id) connected.add(t)
+        if (t === node.id) connected.add(s)
+      })
+      const startPositions = {}
+      displayGraphRef.current.nodes.forEach(n => {
+        startPositions[n.id] = { x: n.fx != null ? n.fx : n.x, y: n.fy != null ? n.fy : n.y }
+      })
+      draggingRef.current = { id: node.id, connected, startPositions, nodeStartX: node.x, nodeStartY: node.y }
+    }
+
+    const { connected, startPositions, nodeStartX, nodeStartY } = draggingRef.current
+    const metric = scaleMetricRef.current
+    const maxVals = maxValuesRef.current
+    const ax = nodeStartX + translate.x   // dragged node centre (translate is cumulative)
+    const ay = nodeStartY + translate.y
+    const draggedR = nodeRadius(node, metric, maxVals)
+
+    displayGraphRef.current.nodes.forEach(n => {
+      if (n.id === node.id) return
+
+      const nR = nodeRadius(n, metric, maxVals)
+      const minSep = draggedR + nR + 2   // hard boundary: sum of radii + small gap
+
+      // Current position (may have been pushed by a previous drag tick)
+      const nx = n.fx != null ? n.fx : n.x
+      const ny = n.fy != null ? n.fy : n.y
+      const dx = nx - ax
+      const dy = ny - ay
+      const dist = Math.sqrt(dx * dx + dy * dy) || 0.001
+
+      if (dist < minSep) {
+        // COLLISION — push this node out to the hard boundary
+        const scale = minSep / dist
+        n.fx = ax + dx * scale
+        n.fy = ay + dy * scale
+        return   // collision wins; skip tether logic for this node
+      }
+
+      if (connected.has(n.id)) {
+        // TETHER — measure from start position so the anchor doesn't drift
+        const sp = startPositions[n.id]
+        const sdx = sp.x - ax
+        const sdy = sp.y - ay
+        const sDist = Math.sqrt(sdx * sdx + sdy * sdy) || 0.001
+        if (sDist > MAX_EDGE_LENGTH) {
+          const scale = MAX_EDGE_LENGTH / sDist
+          n.fx = ax + sdx * scale
+          n.fy = ay + sdy * scale
+        } else {
+          n.fx = sp.x   // within tether — hold at original position
+          n.fy = sp.y
+        }
+      }
+      // Non-connected, no collision: leave untouched
+    })
+  }, [])
+
+  const handleNodeDragEnd = useCallback((node) => {
+    node.fx = node.x
+    node.fy = node.y
+    // Pin every node that was pushed or pulled during the drag
+    displayGraphRef.current.nodes.forEach(n => {
+      if (n.x != null) {
+        n.fx = n.fx != null ? n.fx : n.x
+        n.fy = n.fy != null ? n.fy : n.y
+      }
+    })
+    draggingRef.current = null
+  }, [])
+
+  const handleNodeHover = useCallback((node) => {
+    hoveredNodeRef.current = node || null
+    if (!rafRef.current) {
+      rafRef.current = requestAnimationFrame(() => {
+        rafRef.current = null
+        const fg = fgRef.current
+        if (fg && typeof fg.refresh === 'function') fg.refresh()
+      })
+    }
+    tooltipSetterRef.current?.(node || null)
+  }, [])
+
+  const handleZoom = useCallback(({ k }) => { zoomLevelRef.current = k }, [])
+
+  const handleEngineStop = useCallback(() => {
+    if (!fitDoneRef.current) {
+      fitDoneRef.current = true
+      fgRef.current?.zoomToFit(400, 60)
+    }
+    // Pin every node so drag/click interactions don't reheat the simulation
+    // and send nodes flying off-screen
+    displayGraphRef.current.nodes.forEach(n => {
+      if (n.x != null) { n.fx = n.x; n.fy = n.y }
+    })
+  }, [])
 
   // Max values for scaling
   const maxValues = useMemo(() => {
@@ -262,6 +390,12 @@ export default function PartnershipNetwork({ onSelectCompany }) {
     }
     return max
   }, [graphData.nodes])
+
+  // Stable refs so drag handler and forceCollide always see current values without dep churn
+  const scaleMetricRef = useRef(scaleMetric)
+  scaleMetricRef.current = scaleMetric
+  const maxValuesRef = useRef(maxValues)
+  maxValuesRef.current = maxValues
 
   // Detect unknowns for auto-classify nudge
   const unknownCount = useMemo(() => {
@@ -407,12 +541,16 @@ export default function PartnershipNetwork({ onSelectCompany }) {
     return { nodes, links }
   }, [filteredGraph])  // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Re-fit on filter change
+  // Re-fit on filter change — unpin nodes so they can re-layout
   useEffect(() => {
     fitDoneRef.current = false
+    displayGraphRef.current.nodes.forEach(n => { n.fx = undefined; n.fy = undefined })
     const t = setTimeout(() => fgRef.current?.zoomToFit(400, 60), 800)
     return () => clearTimeout(t)
   }, [filteredGraph])
+
+  // Keep ref updated so onEngineStop can access current nodes without a closure dep
+  displayGraphRef.current = displayGraph
 
   // Compute link curvatures for parallel edges (use displayGraph — what FG actually renders)
   useMemo(() => {
@@ -438,15 +576,18 @@ export default function PartnershipNetwork({ onSelectCompany }) {
       : typeColors(node.type, dark, node.name)
     const isSearch  = searchQuery && node.name.toLowerCase().includes(searchQuery.toLowerCase())
     const isHov     = hoveredNodeRef.current?.id === node.id
-    const isClicked = clickedNodeRef.current?.id === node.id
+    const isClicked = clickedNodeRef.current === node.id
 
-    // Outer glow (hover / search)
+    // Outer glow (hover / search) — use globalAlpha so HSL colors work too
     if (isHov || isSearch) {
       const g = ctx.createRadialGradient(node.x, node.y, r, node.x, node.y, r + 12)
-      g.addColorStop(0, border + (dark ? '50' : '30'))
-      g.addColorStop(1, border + '00')
+      g.addColorStop(0, border)
+      g.addColorStop(1, 'rgba(0,0,0,0)')
+      ctx.save()
+      ctx.globalAlpha = dark ? 0.5 : 0.3
       ctx.beginPath(); ctx.arc(node.x, node.y, r + 12, 0, Math.PI * 2)
       ctx.fillStyle = g; ctx.fill()
+      ctx.restore()
     }
 
     // Selection ring (clicked node)
@@ -506,7 +647,7 @@ export default function PartnershipNetwork({ onSelectCompany }) {
     const { color, alpha } = linkColor(link.type, link.date, dark)
 
     ctx.strokeStyle = color
-    ctx.lineWidth = Math.max(1.5, 3.0 / globalScale)
+    ctx.lineWidth = Math.max(0.8, 1.8 / globalScale)
     ctx.globalAlpha = alpha
     ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.quadraticCurveTo(cpX, cpY, t.x, t.y); ctx.stroke()
 
@@ -704,14 +845,24 @@ export default function PartnershipNetwork({ onSelectCompany }) {
           {/* Zoom controls */}
           <div className="flex items-center gap-1">
             <button
-              onClick={() => { const fg = fgRef.current; if (fg) fg.zoom(fg.zoom() * 1.4, 300) }}
+              onClick={() => {
+                const fg = fgRef.current
+                if (!fg) return
+                zoomLevelRef.current = zoomLevelRef.current * 1.4
+                fg.zoom(zoomLevelRef.current, 300)
+              }}
               title="Zoom in"
               className={`w-7 h-7 flex items-center justify-center rounded border text-base font-bold transition-colors ${
                 dark ? 'border-gray-600 text-gray-300 hover:bg-gray-700' : 'border-bmw-border text-gray-600 hover:bg-bmw-gray-light'
               }`}
             >+</button>
             <button
-              onClick={() => { const fg = fgRef.current; if (fg) fg.zoom(fg.zoom() / 1.4, 300) }}
+              onClick={() => {
+                const fg = fgRef.current
+                if (!fg) return
+                zoomLevelRef.current = zoomLevelRef.current / 1.4
+                fg.zoom(zoomLevelRef.current, 300)
+              }}
               title="Zoom out"
               className={`w-7 h-7 flex items-center justify-center rounded border text-base font-bold transition-colors ${
                 dark ? 'border-gray-600 text-gray-300 hover:bg-gray-700' : 'border-bmw-border text-gray-600 hover:bg-bmw-gray-light'
@@ -827,7 +978,7 @@ export default function PartnershipNetwork({ onSelectCompany }) {
         </div>
 
         {/* Graph canvas */}
-        <div ref={containerRef} className="flex-1 relative min-h-0" onWheel={(e) => e.stopPropagation()} style={{ cursor: panMode ? 'grab' : 'default' }}>
+        <div ref={containerRef} className="flex-1 relative min-h-0" style={{ cursor: panMode ? 'grab' : 'default' }}>
           <FG
             ref={fgRef}
             graphData={displayGraph}
@@ -838,55 +989,26 @@ export default function PartnershipNetwork({ onSelectCompany }) {
             linkCanvasObject={paintLink}
             linkCanvasObjectMode={() => 'replace'}
             nodePointerAreaPaint={pointerArea}
+            enableZoomPanInteraction={true}
             enableNodeDrag={!panMode}
-            onNodeDragEnd={(node) => { node.fx = node.x; node.fy = node.y }}
-            onNodeClick={(node) => {
-              if (node.id === INVESTOR_META_ID) {
-                setInvestorGroup(node._investorList || [])
-                setInvestorPanelOpen(true)
-                setClickedNode(null)
-                clickedNodeRef.current = null
-                setClickedLink(null)
-              } else {
-                // Highlight node ring then navigate to company detail page
-                setClickedNode(node)
-                clickedNodeRef.current = node
-                fgRef.current?.refresh()
-                setClickedLink(null)
-                setInvestorPanelOpen(false)
-                if (node.in_db !== false) {
-                  onSelectCompany?.(node.id)
-                }
-              }
-            }}
-            onLinkClick={(link) => {
-              setClickedLink(link)
-              setClickedNode(null)
-              clickedNodeRef.current = null
-              setInvestorPanelOpen(false)
-              fgRef.current?.refresh()
-            }}
-            onNodeHover={(node) => {
-              hoveredNodeRef.current = node || null
-              fgRef.current?.refresh()        // repaint glow without re-rendering React tree
-              tooltipSetterRef.current?.(node || null)
-            }}
+            onNodeDrag={handleNodeDrag}
+            onNodeDragEnd={handleNodeDragEnd}
+            onNodeClick={handleNodeClick}
+            onLinkClick={handleLinkClick}
+            onNodeHover={handleNodeHover}
+            onZoom={handleZoom}
             backgroundColor={bg}
             cooldownTicks={150}
             d3AlphaDecay={0.04}
             d3VelocityDecay={0.4}
             d3AlphaMin={0.005}
-            warmupTicks={30}
-            onEngineStop={() => {
-              if (fitDoneRef.current) return
-              fitDoneRef.current = true
-              fgRef.current?.zoomToFit(400, 60)
-            }}
+            warmupTicks={0}
+            onEngineStop={handleEngineStop}
           />
 
           {/* Fit All button */}
           <button
-            onClick={() => fgRef.current?.zoomToFit(400, 60)}
+            onClick={() => { zoomLevelRef.current = 1; fgRef.current?.zoomToFit(400, 60) }}
             className={`absolute bottom-4 left-4 z-10 rounded-lg shadow px-3 py-2 text-xs font-medium transition-colors flex items-center gap-1.5
               ${dark
                 ? 'bg-[#1E293B] border border-gray-600 text-gray-300 hover:bg-[#2D3B4F]'
@@ -949,6 +1071,8 @@ export default function PartnershipNetwork({ onSelectCompany }) {
     </div>
   )
 }
+
+export default memo(PartnershipNetwork)
 
 /* ── Sub-components ── */
 

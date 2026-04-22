@@ -232,7 +232,7 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany, d
 
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center text-gray-400">
+      <div className="h-full flex items-center justify-center text-gray-400">
         Loading company details...
       </div>
     )
@@ -240,7 +240,7 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany, d
 
   if (!company) {
     return (
-      <div className="flex-1 flex items-center justify-center text-gray-400">
+      <div className="h-full flex items-center justify-center text-gray-400">
         Company not found
       </div>
     )
@@ -257,46 +257,35 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany, d
   ]
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
+    <div className="h-full flex flex-col overflow-hidden">
       {/* ── Top header ── */}
-      <div className="bg-bmw-navy text-white px-6 py-4">
-        <div className="flex items-center gap-4">
+      <div className="bg-bmw-navy text-white px-6 py-4 flex-shrink-0">
+        <div className="flex items-start gap-3">
           <button
             onClick={onClose}
-            className="text-gray-400 hover:text-white text-sm flex items-center gap-1 shrink-0 transition-colors"
+            className="text-gray-400 hover:text-white text-sm flex items-center gap-1 shrink-0 transition-colors mt-0.5"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
-            Back
+            Close
           </button>
           {company.company_website && (
             <LogoImg website={company.company_website} name={company.company_name} />
           )}
           <div className="min-w-0 flex-1">
-            <h1 className="text-2xl font-display font-bold leading-tight">{company.company_name}</h1>
-            <div className="text-sm text-gray-300 mt-1 flex items-center gap-3 flex-wrap">
-              {company.company_type && <span>{company.company_type}</span>}
-              {company.company_status && (
-                <span className="bg-white/10 px-2 py-0.5 rounded text-xs">{company.company_status}</span>
+            <h1 className="text-lg font-display font-bold leading-snug break-words">{company.company_name}</h1>
+            <div className="mt-1 space-y-0.5">
+              {company.company_type && (
+                <div className="text-sm text-gray-300">{company.company_type}</div>
               )}
-              {company.company_hq_country && <span>{[company.company_hq_city, company.company_hq_state, company.company_hq_country].filter(Boolean).join(', ')}</span>}
+              {company.company_status && (
+                <div><span className="bg-white/10 px-2 py-0.5 rounded text-xs">{company.company_status}</span></div>
+              )}
+              {company.company_hq_country && (
+                <div className="text-sm text-gray-400">{[company.company_hq_city, company.company_hq_state, company.company_hq_country].filter(Boolean).join(', ')}</div>
+              )}
             </div>
-          </div>
-          {/* Key stats in header */}
-          <div className="hidden md:flex items-center gap-6 text-right">
-            {company.market_cap_usd && (
-              <StatPill label="Market Cap" value={formatMoney(company.market_cap_usd)} />
-            )}
-            {company.revenue_usd && (
-              <StatPill label="Revenue" value={formatMoney(company.revenue_usd)} />
-            )}
-            {company.number_of_employees && (
-              <StatPill label="Employees" value={company.number_of_employees.toLocaleString()} />
-            )}
-            {company.total_funding_usd && (
-              <StatPill label="Funding" value={formatMoney(company.total_funding_usd)} />
-            )}
           </div>
         </div>
       </div>
@@ -361,7 +350,7 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany, d
               </div>
 
               {/* Stats grid */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 gap-3">
                 <InfoCard label="HQ" value={[company.company_hq_city, company.company_hq_state, company.company_hq_country].filter(Boolean).join(', ')} />
                 <InfoCard label="Industry Segment" value={company.industry_segment || company.supply_chain_segment} />
                 <InfoCard label="Company Type" value={company.company_type} />
@@ -837,22 +826,13 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany, d
 
 /* ── Helper components ── */
 
-function StatPill({ label, value }) {
-  if (!value) return null
-  return (
-    <div>
-      <div className="text-[10px] text-blue-300 uppercase tracking-wider">{label}</div>
-      <div className="text-white font-semibold text-sm">{value}</div>
-    </div>
-  )
-}
 
 function InfoCard({ label, value }) {
   if (!value) return null
   return (
     <div className="bg-bmw-gray-light rounded-lg p-3">
       <div className="text-[10px] font-medium text-gray-500 uppercase tracking-wider">{label}</div>
-      <div className="text-sm text-[text-bmw-text-primary] mt-0.5 font-medium">{value}</div>
+      <div className="text-sm text-[text-bmw-text-primary] mt-0.5 font-medium break-words leading-snug">{value}</div>
     </div>
   )
 }

@@ -44,7 +44,7 @@ export default function Navbar({ activeTab, setActiveTab, watchlistBreaking = 0,
         {/* Logo + Title */}
         <div className="flex items-center gap-3 min-w-fit">
           <img
-            src="https://upload.wikimedia.org/wikipedia/commons/thumb/4/44/BMW.svg/600px-BMW.svg.png"
+            src="/bmw-logo.png"
             alt="BMW"
             className="w-8 h-8 rounded-full object-cover flex-shrink-0"
           />

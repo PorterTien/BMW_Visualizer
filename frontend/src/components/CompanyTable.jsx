@@ -3,6 +3,12 @@ import { getCompanies, addToWatchlist, removeFromWatchlist, getWatchlist } from 
 
 const PAGE_SIZE = 50
 
+const COUNTRY_ALIASES = {
+  'United States': ['united states', 'us'],
+  'United Kingdom': ['united kingdom', 'uk'],
+  'South Korea': ['south korea', 'republic of korea'],
+}
+
 function safeHostname(url) {
   try { return new URL(url).hostname.replace('www.', '') } catch { return url }
 }
@@ -244,11 +250,22 @@ export default function CompanyTable({ filters, onOpenCompany }) {
           c.summary?.toLowerCase().includes(q)
       )
     }
-    if (filters.types.length) rows = rows.filter((c) => filters.types.includes(c.company_type))
     if (filters.statuses.length) rows = rows.filter((c) => filters.statuses.includes(c.company_status))
-    if (filters.segments.length) rows = rows.filter((c) => filters.segments.includes(c.supply_chain_segment))
-    if (filters.countries.length)
-      rows = rows.filter((c) => filters.countries.some((co) => c.company_hq_country?.includes(co)))
+    if (filters.segments.length) {
+      rows = rows.filter((c) => {
+        const segs = (c.supply_chain_segment || '').split(' | ')
+        return filters.segments.some((seg) => segs.includes(seg))
+      })
+    }
+    if (filters.countries.length) {
+      rows = rows.filter((c) => {
+        const hq = (c.company_hq_country || '').trim().toLowerCase()
+        return filters.countries.some((co) => {
+          const aliases = COUNTRY_ALIASES[co] || [co.toLowerCase()]
+          return aliases.includes(hq)
+        })
+      })
+    }
 
     rows = [...rows].sort((a, b) => {
       const av = a[sortKey] ?? ''

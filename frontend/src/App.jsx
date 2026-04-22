@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import Navbar from './components/Navbar'
 import Sidebar from './components/Sidebar'
 import CompanyMap from './components/CompanyMap'
@@ -13,9 +13,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('map')
   const [filters, setFilters] = useState({ search: '', types: [], statuses: [], segments: [], countries: [] })
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const [selectedCompanyId, setSelectedCompanyId] = useState(null)
   const [highlightCompany, setHighlightCompany] = useState(null)
-  const [seeding, setSeeding] = useState(false)
   const [seedBanner, setSeedBanner] = useState(false)
   // Company detail full page view
   const [detailCompanyId, setDetailCompanyId] = useState(null)
@@ -41,20 +39,18 @@ export default function App() {
       .then(({ data }) => {
         if (!data.seeded) {
           setSeedBanner(true)
-          setSeeding(true)
           triggerSeed()
             .then(() => {
               seedPollRef.current = setInterval(() => {
                 getSeedStatus().then(({ data: s }) => {
                   if (s.seeded) {
                     clearInterval(seedPollRef.current)
-                    setSeeding(false)
                     setSeedBanner(false)
                   }
                 })
               }, 5000)
             })
-            .catch(() => setSeeding(false))
+            .catch(() => setSeedBanner(false))
         }
       })
       .catch(() => {})
@@ -65,32 +61,13 @@ export default function App() {
   const handleOpenCompanyPage = useCallback((id) => setDetailCompanyId(id), [])
   const handleCloseCompanyPage = useCallback(() => setDetailCompanyId(null), [])
 
-  const showSidebar = !detailCompanyId && (activeTab === 'map' || activeTab === 'table')
-
-  // If a company detail page is open, show it full screen
-  if (detailCompanyId) {
-    return (
-      <div className="flex flex-col h-screen overflow-hidden bg-bmw-gray-light">
-        <Navbar
-          activeTab={activeTab}
-          setActiveTab={(tab) => { setDetailCompanyId(null); setActiveTab(tab) }}
-          watchlistBreaking={watchlistBreaking}
-          onOpenDataImport={() => setDataImportOpen(true)}
-        />
-        <CompanyDetailPage
-          companyId={detailCompanyId}
-          onClose={handleCloseCompanyPage}
-          onOpenCompany={handleOpenCompanyPage}
-        />  
-      </div>
-    )
-  }
+  const showSidebar = activeTab === 'map' || activeTab === 'table'
 
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-white">
       <Navbar
         activeTab={activeTab}
-        setActiveTab={setActiveTab}
+        setActiveTab={(tab) => { setDetailCompanyId(null); setActiveTab(tab) }}
         watchlistBreaking={watchlistBreaking}
         onOpenDataImport={() => setDataImportOpen(true)}
       />
@@ -127,12 +104,29 @@ export default function App() {
           {activeTab === 'table' && (
             <CompanyTable filters={filters} onOpenCompany={handleOpenCompanyPage} />
           )}
-          {activeTab === 'watchlist' && <WatchlistPanel />}
+          {activeTab === 'watchlist' && <WatchlistPanel onOpenCompany={handleOpenCompanyPage} />}
 {activeTab === 'network' && (
             <PartnershipNetwork onSelectCompany={handleOpenCompanyPage} />
           )}
         </main>
       </div>
+
+      {/* Company detail drawer */}
+      {detailCompanyId && (
+        <div className="fixed inset-0 z-[1100] flex">
+          {/* Backdrop — click to close */}
+          <div className="flex-1 bg-black/20" onClick={handleCloseCompanyPage} />
+          {/* Panel */}
+          <div className="w-[700px] bg-white shadow-2xl flex flex-col overflow-hidden border-l border-gray-200 animate-slide-in-right">
+            <CompanyDetailPage
+              key={detailCompanyId}
+              companyId={detailCompanyId}
+              onClose={handleCloseCompanyPage}
+              onOpenCompany={handleOpenCompanyPage}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Data Import Modal */}
       {dataImportOpen && (
