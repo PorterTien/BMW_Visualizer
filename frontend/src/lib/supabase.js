@@ -3,8 +3,11 @@ import { createClient } from '@supabase/supabase-js'
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
 
+// Visible in DevTools console — tells you immediately if env vars are missing
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  console.error('Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY — auth will not work.')
+  console.error('❌ SUPABASE: Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY — auth will not work. Check Railway Variables.')
+} else {
+  console.log('✅ SUPABASE: env vars loaded, project =', SUPABASE_URL)
 }
 
 export const supabase = createClient(
@@ -14,26 +17,17 @@ export const supabase = createClient(
     auth: {
       persistSession: true,
       autoRefreshToken: true,
-      // detectSessionInUrl parses #access_token from the hash at client construction time.
-      // This must be true for implicit flow OAuth redirects to work in SPAs.
       detectSessionInUrl: true,
-      flowType: 'implicit',
+      // pkce is more reliable than implicit for SPAs — no hash-parsing race conditions
+      flowType: 'pkce',
     },
   }
 )
 
-// Eagerly parse the URL hash on module load so tokens are consumed before
-// any router or React lifecycle can strip the hash away.
-// getSession() is idempotent — safe to call multiple times.
-supabase.auth.getSession()
-
 export async function signInWithGoogle() {
   return supabase.auth.signInWithOAuth({
     provider: 'google',
-    options: {
-      redirectTo: window.location.origin,
-      queryParams: { access_type: 'offline', prompt: 'consent' },
-    },
+    options: { redirectTo: window.location.origin },
   })
 }
 

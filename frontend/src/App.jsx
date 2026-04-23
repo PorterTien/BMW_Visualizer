@@ -27,13 +27,13 @@ export default function App() {
   useEffect(() => {
     // Subscribe first so we don't miss the INITIAL_SESSION event that fires
     // when getSession() resolves the URL hash tokens after an OAuth redirect.
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, s) => {
+      console.log('[Auth] event:', event, 'user:', s?.user?.email ?? 'none')
       setSession(s)
       setAuthToken(s?.access_token ?? null)
     })
-    // getSession() triggers INITIAL_SESSION → onAuthStateChange fires above.
-    // Also handles the case where the session is already in localStorage.
     supabase.auth.getSession().then(({ data: { session: s } }) => {
+      console.log('[Auth] getSession:', s?.user?.email ?? 'no session')
       setSession(s)
       setAuthToken(s?.access_token ?? null)
     })
