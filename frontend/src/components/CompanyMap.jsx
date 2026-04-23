@@ -144,7 +144,7 @@ function PopupContent({ c, onSelectCompany, watchlistIds, onToggleWatchlist }) {
 
 /* ── Legend ── */
 
-function Legend() {
+function Legend({ hoveredType, onHoverType }) {
   const [collapsed, setCollapsed] = React.useState(false)
   return (
     <div className={`absolute bottom-8 left-4 z-[1000] rounded-lg shadow-lg text-xs border border-bmw-border overflow-hidden transition-colors ${
@@ -158,16 +158,33 @@ function Legend() {
         <span className="ml-4 text-gray-400">{collapsed ? '▲' : '▼'}</span>
       </button>
       {!collapsed && (
-        <div className="px-3 pb-3 space-y-1 bg-white">
-          {Object.entries(TYPE_COLORS).map(([type, color]) => (
-            <div key={type} className="flex items-center gap-2">
-              <span
-                className="inline-block w-3 h-3 rounded-full flex-shrink-0"
-                style={{ backgroundColor: color }}
-              />
-              <span className="text-gray-700 capitalize text-[11px]">{type}</span>
-            </div>
-          ))}
+        <div
+          className="px-2 pb-2 pt-1 space-y-0.5 bg-white"
+          onMouseLeave={() => onHoverType?.(null)}
+        >
+          {Object.entries(TYPE_COLORS).map(([type, color]) => {
+            const isActive = hoveredType === type
+            const isDimmed = hoveredType && hoveredType !== type
+            return (
+              <div
+                key={type}
+                onMouseEnter={() => onHoverType?.(type)}
+                className={`flex items-center gap-2 px-2 py-0.5 rounded cursor-pointer transition-all ${
+                  isActive ? 'bg-gray-100 font-semibold' : isDimmed ? 'opacity-40' : ''
+                }`}
+              >
+                <span
+                  className="inline-block w-3 h-3 rounded-full flex-shrink-0 transition-transform"
+                  style={{
+                    backgroundColor: color,
+                    boxShadow: isActive ? `0 0 6px ${color}` : 'none',
+                    transform: isActive ? 'scale(1.25)' : 'scale(1)',
+                  }}
+                />
+                <span className="text-gray-700 capitalize text-[11px]">{type}</span>
+              </div>
+            )
+          })}
         </div>
       )}
     </div>
@@ -206,6 +223,7 @@ export default function CompanyMap({ filters, onSelectCompany, highlightName }) 
   const [loading, setLoading] = useState(true)
   const [heatmapMode, setHeatmapMode] = useState(false)
   const [watchlistIds, setWatchlistIds] = useState(new Set())
+  const [hoveredType, setHoveredType] = useState(null)
 
   useEffect(() => {
     getCompaniesMap()
@@ -313,17 +331,31 @@ export default function CompanyMap({ filters, onSelectCompany, highlightName }) 
             const isHighlighted = highlightName && c.company_name === highlightName
             const isHQ = c.is_hq
             const baseColor = TYPE_COLORS[c.company_type] || '#9CA3AF'
+            // Legend-hover highlight: when the user mouses over a legend row,
+            // markers of that type pop (fully opaque, larger radius, heavier
+            // stroke) and every other marker fades out so the group is easy
+            // to pick out of the cluttered map.
+            const isTypeHovered = hoveredType && c.company_type === hoveredType
+            const isTypeDimmed = hoveredType && !isTypeHovered
+            const baseRadius = isHighlighted ? 12 : isHQ ? 8 : 6
+            const radius = isTypeHovered ? baseRadius + 4 : baseRadius
+            const baseFillOpacity = isHighlighted ? 1 : isHQ ? 0.9 : 0.7
+            const fillOpacity = isTypeDimmed ? 0.08 : isTypeHovered ? 1 : baseFillOpacity
+            const strokeOpacity = isTypeDimmed ? 0.15 : 1
+            const baseWeight = isHighlighted ? 3 : isHQ ? 2 : 1
+            const weight = isTypeHovered ? baseWeight + 1 : baseWeight
             return (
               <React.Fragment key={`${c.id}-${idx}`}>
                 {isHQ && (
                   <CircleMarker
                     center={[c.lat, c.lng]}
-                    radius={isHighlighted ? 18 : 13}
+                    radius={isHighlighted ? 18 : isTypeHovered ? 17 : 13}
                     pathOptions={{
                       color: isHighlighted ? '#EE0405' : baseColor,
                       fillColor: 'transparent',
                       fillOpacity: 0,
                       weight: 2,
+                      opacity: strokeOpacity,
                       dashArray: '4 4',
                     }}
                     interactive={false}
@@ -331,12 +363,14 @@ export default function CompanyMap({ filters, onSelectCompany, highlightName }) 
                 )}
                 <CircleMarker
                   center={[c.lat, c.lng]}
-                  radius={isHighlighted ? 12 : isHQ ? 8 : 6}
+                  radius={radius}
+                  pane={isTypeHovered ? 'markerPane' : undefined}
                   pathOptions={{
                     color: isHighlighted ? '#EE0405' : baseColor,
                     fillColor: isHighlighted ? '#EE0405' : baseColor,
-                    fillOpacity: isHighlighted ? 1 : isHQ ? 0.9 : 0.7,
-                    weight: isHighlighted ? 3 : isHQ ? 2 : 1,
+                    fillOpacity,
+                    opacity: strokeOpacity,
+                    weight,
                   }}
                 >
                   <Popup>
@@ -364,7 +398,7 @@ export default function CompanyMap({ filters, onSelectCompany, highlightName }) 
         Heatmap
       </button>
 
-      {heatmapMode ? <HeatLegend /> : <Legend />}
+      {heatmapMode ? <HeatLegend /> : <Legend hoveredType={hoveredType} onHoverType={setHoveredType} />}
 
       <div className="absolute top-3 left-14 z-[1000] bg-white rounded shadow px-3 py-1.5 text-xs text-gray-600 border border-bmw-border">
         Showing <strong>{filtered.length}</strong> of <strong>{companies.length}</strong> locations

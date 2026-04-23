@@ -31,7 +31,12 @@ export const getCompanies = (params) => {
   return api.get('/companies', { params })
 }
 export const getCompany = (id) => api.get(`/companies/${id}`)
-export const getCompanyDetail = (id) => api.get(`/companies/${id}/detail`)
+export const getCompanyDetail = (id) =>
+  cached(`company:${id}:detail`, () => api.get(`/companies/${id}/detail`))
+export const refreshCompanyDetail = (id) => {
+  bustCache(`company:${id}:detail`)
+  return api.get(`/companies/${id}/detail`)
+}
 export const getCompaniesMap = () => cached('companies:map', () => api.get('/companies/map'))
 export const getCompaniesNetwork = () => cached('companies:network', () => api.get('/companies/network'))
 export const researchCompany = (company_name) =>
@@ -44,8 +49,10 @@ export const discoverCompanies = (segment, count = 10, custom_query = '') =>
   api.post('/companies/discover', { segment, count, custom_query })
 export const bulkResearch = (company_names) =>
   api.post('/companies/bulk-research', { company_names })
-export const updateCompany = (id, updates, mark_as_manual = true) =>
-  api.put(`/companies/${id}`, { updates, mark_as_manual })
+export const updateCompany = (id, updates, mark_as_manual = true) => {
+  bustCache(`company:${id}:detail`)
+  return api.put(`/companies/${id}`, { updates, mark_as_manual })
+}
 
 // Partnerships
 export const getPartnerships = (params) => api.get('/partnerships', { params })
@@ -64,8 +71,6 @@ export const getCompanyFacilities = (id) => api.get(`/companies/${id}/facilities
 export const getCompanyMetrics = (id) => api.get(`/companies/${id}/metrics`)
 
 // News
-export const getNews = (params) => api.get('/news', { params })
-export const searchNews = (company_name) => api.post('/news/search', { company_name })
 export const getArticleThumbnail = (url) => api.get('/news/thumbnail', { params: { url } })
 
 // Uploads

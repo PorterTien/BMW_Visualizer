@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from backend.auth import get_user_id, require_user
+from backend.auth import require_user
 from backend.database import get_db
 from backend.models import Company, WatchlistDigest, WatchlistEntry
 
@@ -88,28 +88,35 @@ def get_latest_digest(
     user_id: str = Depends(require_user),
     db: Session = Depends(get_db),
 ):
-    entries = db.query(WatchlistEntry).filter_by(user_id=user_id).all()
-    company_ids = [e.company_id for e in entries]
+    company_ids = [
+        cid for (cid,) in db.query(WatchlistEntry.company_id)
+        .filter(WatchlistEntry.user_id == user_id).all()
+    ]
     if not company_ids:
         return []
 
+    # Pull all digests for these companies in one query, then keep the newest
+    # per company_id in Python. O(N) memory; 1 round-trip instead of N.
+    digests = (
+        db.query(WatchlistDigest)
+        .filter(WatchlistDigest.company_id.in_(company_ids))
+        .order_by(WatchlistDigest.company_id, WatchlistDigest.run_date.desc())
+        .all()
+    )
+    seen: set[int] = set()
     results = []
-    for cid in company_ids:
-        digest = (
-            db.query(WatchlistDigest)
-            .filter_by(company_id=cid)
-            .order_by(WatchlistDigest.run_date.desc())
-            .first()
-        )
-        if digest:
-            results.append({
-                "company_id": digest.company_id,
-                "company_name": digest.company_name,
-                "run_date": digest.run_date,
-                "has_breaking": bool(digest.has_breaking),
-                "articles": json.loads(digest.articles_json or "[]"),
-                "created_at": digest.created_at,
-            })
+    for d in digests:
+        if d.company_id in seen:
+            continue
+        seen.add(d.company_id)
+        results.append({
+            "company_id": d.company_id,
+            "company_name": d.company_name,
+            "run_date": d.run_date,
+            "has_breaking": bool(d.has_breaking),
+            "articles": json.loads(d.articles_json or "[]"),
+            "created_at": d.created_at,
+        })
     return results
 
 

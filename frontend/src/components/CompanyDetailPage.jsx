@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react'
-import { getCompanyDetail, researchCompany, getJob, chatWithCompany, updateCompany } from '../api/client'
+import { getCompanyDetail, refreshCompanyDetail, researchCompany, getJob, chatWithCompany, updateCompany } from '../api/client'
 
 /* ── Logo helper ── */
 function nameColor(name) {
@@ -169,7 +169,7 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany, d
             clearInterval(pollRef.current)
             setResearching(false)
             if (job.status === 'complete') {
-              const { data: updated } = await getCompanyDetail(companyId)
+              const { data: updated } = await refreshCompanyDetail(companyId)
               setCompany(updated)
               setResearchStatus('Research complete!')
             } else {

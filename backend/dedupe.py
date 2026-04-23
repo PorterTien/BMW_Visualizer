@@ -82,27 +82,6 @@ def _safe_json_list(val: str | None) -> list:
         return []
 
 
-def find_company_by_normalized_name(db: Session, name: str) -> Company | None:
-    """Return the first Company whose normalized name matches `name`. O(n).
-
-    Callers that need to look up many names in a row should build a
-    {normalized_name: Company} map themselves; this helper is intended for
-    one-shot lookups inside upsert paths.
-    """
-    target = normalize_name(name)
-    if not target:
-        return None
-    # ilike-exact is a cheap pre-filter that handles the common case
-    exact = db.query(Company).filter(Company.company_name.ilike(name)).first()
-    if exact and normalize_name(exact.company_name) == target:
-        return exact
-    # Fall back to scanning every row (needed for "Tesla" vs "Tesla Inc.")
-    for c in db.query(Company).all():
-        if normalize_name(c.company_name) == target:
-            return c
-    return None
-
-
 # Columns we never copy during a merge.
 _SKIP_MERGE_COLS = frozenset({"id", "company_name", "manual_overrides"})
 
@@ -231,19 +210,34 @@ def merge_companies(db: Session, winner: Company, loser: Company) -> None:
 
 def prune_degenerate_partnerships(db: Session) -> int:
     """Delete partnerships left with fewer than 2 unique member companies after
-    merges. Returns the count removed."""
-    removed = 0
-    for p in db.query(Partnership).all():
-        members = db.query(PartnershipMember).filter_by(partnership_id=p.id).all()
-        unique_ids = {m.company_id for m in members}
-        if len(unique_ids) < 2:
-            for m in members:
-                db.delete(m)
-            db.delete(p)
-            removed += 1
-    if removed:
-        db.flush()
-    return removed
+    merges. Returns the count removed.
+
+    Old version ran O(#partnerships) queries to fetch members; this pulls every
+    (partnership_id, company_id) pair in a single SELECT, groups in memory, and
+    deletes by id in two bulk statements."""
+    pairs = db.query(
+        PartnershipMember.partnership_id, PartnershipMember.company_id,
+    ).all()
+    members_by_pship: dict[int, set[int]] = {}
+    for pid, cid in pairs:
+        members_by_pship.setdefault(pid, set()).add(cid)
+
+    # Partnerships with zero members don't appear in the pair list; include all.
+    all_ids = {p_id for (p_id,) in db.query(Partnership.id).all()}
+    degenerate_ids = [
+        pid for pid in all_ids if len(members_by_pship.get(pid, set())) < 2
+    ]
+    if not degenerate_ids:
+        return 0
+
+    db.query(PartnershipMember).filter(
+        PartnershipMember.partnership_id.in_(degenerate_ids),
+    ).delete(synchronize_session=False)
+    db.query(Partnership).filter(Partnership.id.in_(degenerate_ids)).delete(
+        synchronize_session=False,
+    )
+    db.flush()
+    return len(degenerate_ids)
 
 
 def dedupe_companies(db: Session, commit: bool = True) -> dict:

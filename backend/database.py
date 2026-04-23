@@ -96,12 +96,33 @@ def migrate_db():
                     conn.execute(text(f"ALTER TABLE companies ADD COLUMN {col} {pg_type}"))
                     conn.commit()
 
+    # watchlist.user_id was added after the initial ship. Back-fill on old DBs
+    # so per-user watchlist queries don't crash with "no such column".
+    with engine.connect() as conn:
+        if dialect == "sqlite":
+            existing = {row[1] for row in conn.execute(text("PRAGMA table_info(watchlist)"))}
+            if "user_id" not in existing:
+                conn.execute(text("ALTER TABLE watchlist ADD COLUMN user_id TEXT"))
+                conn.commit()
+        elif dialect == "postgresql":
+            existing = {
+                row[0] for row in conn.execute(text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = 'watchlist'"
+                ))
+            }
+            if "user_id" not in existing:
+                conn.execute(text("ALTER TABLE watchlist ADD COLUMN user_id TEXT"))
+                conn.commit()
+
     # Ensure filter-column indices exist (idempotent via IF NOT EXISTS)
     filter_indices = [
         ("ix_company_type", "companies", "company_type"),
         ("ix_company_status", "companies", "company_status"),
         ("ix_supply_chain_segment", "companies", "supply_chain_segment"),
         ("ix_company_hq_country", "companies", "company_hq_country"),
+        ("ix_watchlist_user", "watchlist", "user_id"),
+        ("ix_watchlist_company", "watchlist", "company_id"),
     ]
     with engine.connect() as conn:
         for idx_name, table, col in filter_indices:

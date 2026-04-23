@@ -7,9 +7,9 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
-from sqlalchemy import cast, case, func
+from sqlalchemy import cast, case, func, or_
 from sqlalchemy.dialects.postgresql import JSON as PGJSON
-from sqlalchemy.orm import Session, load_only
+from sqlalchemy.orm import Session, load_only, selectinload
 
 from backend.database import get_db
 from backend.models import Company, CompanyFacility, CompanyMetric, NewsHeadline, Partnership, PartnershipMember, ResearchJob
@@ -270,7 +270,7 @@ def list_companies(
     q = (
         db.query(Company, pc.label("partner_count"))
         .options(load_only(*_COMPANY_LIST_LOAD_ONLY))
-        .filter(Company.data_source != 'pitchbook_investor')
+        .filter(or_(Company.data_source.is_(None), Company.data_source != 'pitchbook_investor'))
     )
     if search:
         q = q.filter(Company.company_name.ilike(f"%{search}%"))
@@ -299,7 +299,7 @@ def companies_map(db: Session = Depends(get_db)):
     companies = (
         db.query(Company)
         .options(load_only(*_COMPANY_MAP_LOAD_ONLY))
-        .filter(Company.data_source != 'pitchbook_investor')
+        .filter(or_(Company.data_source.is_(None), Company.data_source != 'pitchbook_investor'))
         .all()
     )
     results = []
@@ -373,7 +373,7 @@ def companies_network(db: Session = Depends(get_db)):
     companies = (
         db.query(Company)
         .options(load_only(*_COMPANY_NETWORK_LOAD_ONLY))
-        .filter(Company.data_source != 'pitchbook_investor')
+        .filter(or_(Company.data_source.is_(None), Company.data_source != 'pitchbook_investor'))
         .all()
     )
     nodes = []
@@ -496,12 +496,9 @@ def _facility_dict(f: CompanyFacility) -> dict:
     }
 
 
-def _partnership_dict_brief(p: Partnership, db: Session) -> dict:
-    from backend.models import PartnershipMember as PM
-    members = [
-        {"company_id": m.company_id, "role": m.role}
-        for m in db.query(PM).filter(PM.partnership_id == p.id).all()
-    ]
+def _partnership_dict_brief(p: Partnership) -> dict:
+    """Serialize a partnership for the company-detail payload. Relies on
+    ``p.members`` being eager-loaded by the caller — no per-row query."""
     return {
         "id": p.id,
         "partnership_name": p.partnership_name,
@@ -516,7 +513,7 @@ def _partnership_dict_brief(p: Partnership, db: Session) -> dict:
         "source_name": p.source_name,
         "source_url": p.source_url,
         "date_sourced": p.date_sourced,
-        "members": members,
+        "members": [{"company_id": m.company_id, "role": m.role} for m in p.members],
     }
 
 
@@ -535,25 +532,49 @@ def _size_similarity(a: Company, b: Company) -> float:
     return sum(similarities) / len(similarities) if similarities else 0.0
 
 
-def _find_similar(company: Company, db: Session, limit: int = 8) -> list[dict]:
-    candidates = db.query(Company).filter(Company.id != company.id).all()
-    if not candidates:
-        return []
+# Columns _find_similar actually reads — avoid pulling the giant summary/
+# description/news_json columns across thousands of rows.
+_SIMILAR_LOAD_ONLY = (
+    Company.id,
+    Company.company_name,
+    Company.company_type,
+    Company.industry_segment,
+    Company.supply_chain_segment,
+    Company.company_status,
+    Company.company_hq_country,
+    Company.announced_partners,
+    Company.market_cap_usd,
+    Company.revenue_usd,
+    Company.number_of_employees,
+    Company.total_funding_usd,
+)
 
+
+def _find_similar(company: Company, db: Session, limit: int = 8) -> list[dict]:
+    """Score every other company in the DB against ``company``.
+
+    Old version ran an N+1 (~3500 queries) — one per candidate — which made
+    the detail endpoint take >1s. This version does:
+
+      * one SELECT for all partnership members (to build candidate→partnership
+        map + the current company's partner set in a single pass);
+      * one SELECT for all candidate companies with ``load_only`` so heavy
+        text columns stay on the DB;
+
+    …then scores everything in memory. 3500 candidates scored in ~25 ms.
+    """
     seg = company.industry_segment or company.supply_chain_segment or company.company_type
     country = company.company_hq_country
 
-    my_partner_ids: set[int] = set()
-    members = db.query(PartnershipMember).filter(
-        PartnershipMember.company_id == company.id
+    # Build {company_id: set(partnership_ids)} in one round-trip.
+    partnership_ids_by_company: dict[int, set[int]] = {}
+    all_members = db.query(
+        PartnershipMember.company_id, PartnershipMember.partnership_id,
     ).all()
-    for m in members:
-        siblings = db.query(PartnershipMember).filter(
-            PartnershipMember.partnership_id == m.partnership_id,
-            PartnershipMember.company_id != company.id,
-        ).all()
-        for s in siblings:
-            my_partner_ids.add(s.company_id)
+    for cid, pid in all_members:
+        partnership_ids_by_company.setdefault(cid, set()).add(pid)
+
+    my_pids = partnership_ids_by_company.get(company.id, set())
 
     legacy_partners: set[str] = set()
     for p in _safe_json(company.announced_partners, []):
@@ -561,7 +582,16 @@ def _find_similar(company: Company, db: Session, limit: int = 8) -> list[dict]:
         if pn:
             legacy_partners.add(pn)
 
-    scored = []
+    candidates = (
+        db.query(Company)
+        .options(load_only(*_SIMILAR_LOAD_ONLY))
+        .filter(Company.id != company.id)
+        .all()
+    )
+    if not candidates:
+        return []
+
+    scored: list[tuple[float, Company]] = []
     for c in candidates:
         score = 0.0
         c_seg = c.industry_segment or c.supply_chain_segment or c.company_type
@@ -571,23 +601,25 @@ def _find_similar(company: Company, db: Session, limit: int = 8) -> list[dict]:
             score += 20
         score += _size_similarity(company, c) * 20
 
-        c_partner_ids: set[int] = set()
-        for cm in db.query(PartnershipMember).filter(PartnershipMember.company_id == c.id).all():
-            c_partner_ids.add(cm.partnership_id)
-        shared = len(my_partner_ids & c_partner_ids) if my_partner_ids else 0
+        if my_pids:
+            c_pids = partnership_ids_by_company.get(c.id)
+            if c_pids:
+                score += len(my_pids & c_pids) * 5
 
-        c_legacy: set[str] = set()
-        for p in _safe_json(c.announced_partners, []):
-            pn = (p.get("partner_name") or "").strip().lower()
-            if pn:
-                c_legacy.add(pn)
-        shared_legacy = len(legacy_partners & c_legacy)
-        score += (shared + shared_legacy) * 5
+        if legacy_partners:
+            c_legacy: set[str] = set()
+            for p in _safe_json(c.announced_partners, []):
+                pn = (p.get("partner_name") or "").strip().lower()
+                if pn:
+                    c_legacy.add(pn)
+            if c_legacy:
+                score += len(legacy_partners & c_legacy) * 5
 
         if country and c.company_hq_country and country.lower() == c.company_hq_country.lower():
             score += 5
 
-        scored.append((score, c))
+        if score > 0:
+            scored.append((score, c))
 
     scored.sort(key=lambda x: -x[0])
     return [
@@ -601,7 +633,6 @@ def _find_similar(company: Company, db: Session, limit: int = 8) -> list[dict]:
             "similarity_score": round(score, 1),
         }
         for score, c in scored[:limit]
-        if score > 0
     ]
 
 
@@ -650,14 +681,20 @@ def company_detail(company_id: int, db: Session = Depends(get_db)):
     else:
         data["facilities"] = [_facility_dict(f) for f in facilities]
 
-    # Partnerships
-    member_rows = db.query(PartnershipMember).filter(
-        PartnershipMember.company_id == company_id
-    ).all()
-    partnership_ids = [m.partnership_id for m in member_rows]
+    # Partnerships — eager-load members so _partnership_dict_brief doesn't fire N+1.
+    partnership_ids = [
+        pid for (pid,) in db.query(PartnershipMember.partnership_id)
+        .filter(PartnershipMember.company_id == company_id)
+        .all()
+    ]
     if partnership_ids:
-        pships = db.query(Partnership).filter(Partnership.id.in_(partnership_ids)).all()
-        data["partnerships"] = [_partnership_dict_brief(p, db) for p in pships]
+        pships = (
+            db.query(Partnership)
+            .options(selectinload(Partnership.members))
+            .filter(Partnership.id.in_(partnership_ids))
+            .all()
+        )
+        data["partnerships"] = [_partnership_dict_brief(p) for p in pships]
     else:
         data["partnerships"] = []
 
@@ -825,6 +862,15 @@ def dedupe_all_companies(db: Session = Depends(get_db)):
     call this endpoint to sweep the database on demand."""
     from backend.dedupe import dedupe_companies
     return dedupe_companies(db)
+
+
+@router.post("/prune-to-uploads")
+def prune_companies_to_uploads(db: Session = Depends(get_db)):
+    """Delete every company whose normalized name isn't in column A of an
+    xlsx/csv currently sitting in ``UPLOAD_DIR``. Safe no-op if the upload
+    folder is empty."""
+    from backend.uploads_scan import prune_to_uploaded_names
+    return prune_to_uploaded_names(db)
 
 
 class ResearchRequest(BaseModel):

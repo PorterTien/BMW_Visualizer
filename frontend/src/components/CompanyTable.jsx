@@ -171,7 +171,7 @@ function exportCSV(companies) {
       c.company_name, c.company_type, c.supply_chain_segment, c.company_status,
       c.company_hq_city, c.company_hq_state, c.company_hq_country,
       c.market_cap_usd, c.revenue_usd, c.total_funding_usd, c.funding_status, c.last_fundraise_date,
-      c.number_of_employees, c.employee_size, (c.announced_partners || []).length,
+      c.number_of_employees, c.employee_size, c.announced_partners_count ?? (c.announced_partners || []).length,
       c.chemistries, c.feedstock, c.products, maxGwh, c.plant_start_date,
       c.hq_company, c.company_website, c.linkedin_url, c.crunchbase_url, c.pitchbook_url,
       c.data_source, c.last_updated,
@@ -197,6 +197,8 @@ export default function CompanyTable({ filters, onOpenCompany }) {
   const [pageSize, setPageSize] = useState(PAGE_SIZE)
   const [watchedIds, setWatchedIds] = useState(new Set())
   const [watchTogglingId, setWatchTogglingId] = useState(null)
+  const [isAuthed, setIsAuthed] = useState(false)
+  const [watchError, setWatchError] = useState('')
 
   useEffect(() => {
     setLoading(true)
@@ -210,26 +212,56 @@ export default function CompanyTable({ filters, onOpenCompany }) {
       .finally(() => setLoading(false))
 
     getWatchlist()
-      .then(({ data: wl }) => setWatchedIds(new Set(wl.map((e) => e.company_id))))
-      .catch(() => {}) // silently ignore — user may not be logged in
+      .then(({ data: wl }) => {
+        setIsAuthed(true)
+        setWatchedIds(new Set(wl.map((e) => e.company_id)))
+      })
+      .catch(() => setIsAuthed(false)) // 401 = not logged in; fine
   }, [])
 
+  // Optimistic toggle: update UI first, then call the API, roll back on
+  // failure. This is what makes the star feel "pressable" — previously the
+  // handler awaited the API before updating state, so a 401 / network error
+  // left the star looking unchanged and users thought the button was dead.
   const handleWatchToggle = useCallback(async (e, companyId) => {
+    e.preventDefault()
     e.stopPropagation()
+    if (watchTogglingId === companyId) return
+    if (!isAuthed) {
+      setWatchError('Sign in to use the watchlist')
+      setTimeout(() => setWatchError(''), 3000)
+      return
+    }
+    const wasWatched = watchedIds.has(companyId)
     setWatchTogglingId(companyId)
+    setWatchedIds((prev) => {
+      const s = new Set(prev)
+      if (wasWatched) s.delete(companyId); else s.add(companyId)
+      return s
+    })
     try {
-      if (watchedIds.has(companyId)) {
+      if (wasWatched) {
         await removeFromWatchlist(companyId)
-        setWatchedIds((prev) => { const s = new Set(prev); s.delete(companyId); return s })
       } else {
         await addToWatchlist(companyId)
-        setWatchedIds((prev) => new Set([...prev, companyId]))
       }
     } catch (err) {
-      console.error(err)
+      console.error('Watchlist toggle failed:', err)
+      // Roll back
+      setWatchedIds((prev) => {
+        const s = new Set(prev)
+        if (wasWatched) s.add(companyId); else s.delete(companyId)
+        return s
+      })
+      const msg = err?.response?.status === 401
+        ? 'Sign in to use the watchlist'
+        : 'Could not update watchlist — try again'
+      setWatchError(msg)
+      setTimeout(() => setWatchError(''), 3000)
+    } finally {
+      setWatchTogglingId(null)
     }
-    setWatchTogglingId(null)
-  }, [watchedIds])
+  }, [watchedIds, watchTogglingId, isAuthed])
 
   const categoryCounts = useMemo(() => {
     const counts = { all: companies.length }
@@ -298,7 +330,12 @@ export default function CompanyTable({ filters, onOpenCompany }) {
   }
 
   return (
-    <div className="flex flex-col flex-1 min-h-0">
+    <div className="flex flex-col flex-1 min-h-0 relative">
+      {watchError && (
+        <div className="absolute top-3 right-4 z-50 bg-amber-50 border border-amber-200 text-amber-800 text-xs px-3 py-1.5 rounded-md shadow-sm animate-[fadeIn_150ms_ease-out]">
+          {watchError}
+        </div>
+      )}
       {/* Category tabs */}
       <div className="flex flex-wrap gap-1.5 px-4 pt-3 pb-2 bg-bmw-gray-light border-b border-bmw-border">
         {CATEGORIES.map((cat) => {
@@ -395,7 +432,8 @@ export default function CompanyTable({ filters, onOpenCompany }) {
             <tbody>
               {paginated.map((c, i) => {
                 const rowNum = startIdx + i + 1
-                const partnerCount = (c.announced_partners || []).length
+                // List endpoint returns announced_partners_count; detail endpoints return the full array.
+                const partnerCount = c.announced_partners_count ?? (c.announced_partners || []).length
                 // Parse max GWh from JSON capacity object
                 let maxGwh = null
                 try {
@@ -417,10 +455,41 @@ export default function CompanyTable({ filters, onOpenCompany }) {
                   >
                     {/* # */}
                     <td className="px-2 py-1.5 text-center text-[#8899A6] font-mono text-[11px]">{rowNum}</td>
-                    {/* Watch */}
-                    <td className="px-1 py-1.5 text-center" onClick={(e) => handleWatchToggle(e, c.id)}>
-                      <button className={`transition-colors ${watchTogglingId === c.id ? 'opacity-40' : 'hover:scale-110'}`} title={watchedIds.has(c.id) ? 'Remove' : 'Add to watchlist'}>
-                        <svg className={`w-4 h-4 ${watchedIds.has(c.id) ? 'fill-amber-400 text-amber-400' : 'fill-none text-gray-300 hover:text-amber-300'}`} viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+                    {/* Watch — click handler lives on the button so the row
+                        <tr onClick> can't steal it; we also stopPropagation
+                        defensively in handleWatchToggle. */}
+                    <td
+                      className="px-1 py-1.5 text-center"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <button
+                        type="button"
+                        onClick={(e) => handleWatchToggle(e, c.id)}
+                        disabled={watchTogglingId === c.id}
+                        aria-pressed={watchedIds.has(c.id)}
+                        title={
+                          !isAuthed
+                            ? 'Sign in to use the watchlist'
+                            : watchedIds.has(c.id)
+                              ? 'Remove from watchlist'
+                              : 'Add to watchlist'
+                        }
+                        className={`p-1 rounded transition-colors cursor-pointer ${
+                          watchTogglingId === c.id
+                            ? 'opacity-40 cursor-wait'
+                            : 'hover:bg-amber-50 hover:scale-110'
+                        }`}
+                      >
+                        <svg
+                          className={`w-4 h-4 pointer-events-none ${
+                            watchedIds.has(c.id)
+                              ? 'fill-amber-400 text-amber-400'
+                              : 'fill-none text-gray-300'
+                          }`}
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                          strokeWidth="1.5"
+                        >
                           <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.499a.562.562 0 0 1 1.04 0l2.125 5.111a.563.563 0 0 0 .475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 0 0-.182.557l1.285 5.385a.562.562 0 0 1-.84.61l-4.725-2.885a.562.562 0 0 0-.586 0L6.982 20.54a.562.562 0 0 1-.84-.61l1.285-5.386a.562.562 0 0 0-.182-.557l-4.204-3.602a.562.562 0 0 1 .321-.988l5.518-.442a.563.563 0 0 0 .475-.345L11.48 3.5Z" />
                         </svg>
                       </button>
