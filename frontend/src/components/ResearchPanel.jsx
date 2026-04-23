@@ -139,13 +139,8 @@ export default function ResearchPanel() {
   }
 
   return (
-    <div className="flex-1 p-8 bg-bmw-gray-light overflow-hidden">
+    <div className="flex-1 px-8 pt-6 pb-4 bg-bmw-gray-light overflow-hidden">
       <div className="max-w-3xl mx-auto space-y-6">
-
-        <div>
-          <h2 className="text-lg font-semibold text-[text-bmw-text-primary] mb-1">Data Import</h2>
-          <p className="text-sm text-gray-500">Upload company data from spreadsheets or partnership network exports.</p>
-        </div>
 
         {/* CSV / XLSX */}
         <div className="bg-white rounded-xl border border-[#DDE4EA] p-6">
