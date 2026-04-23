@@ -24,14 +24,7 @@ def _log_task_error(task: asyncio.Task) -> None:
         log.error("Background task %s raised: %s", task.get_name(), task.exception())
 
 
-def _safe_json(val: str | None, default):
-    """Parse JSON stored in a DB column; return default on missing or corrupt data."""
-    if not val:
-        return default
-    try:
-        return json.loads(val)
-    except (json.JSONDecodeError, TypeError):
-        return default
+from backend._util import safe_json as _safe_json  # re-exported for existing callers
 
 
 def _company_dict(c: Company) -> dict:
@@ -370,19 +363,39 @@ def companies_map(db: Session = Depends(get_db)):
 
 @router.get("/network")
 def companies_network(db: Session = Depends(get_db)):
+    # Kept in sync with BUCKET_PARTNER_NAMES in routes/partnerships.py.
+    _BUCKET_NAMES = {
+        "independent investors", "undisclosed investors", "undisclosed investor",
+        "other investors", "various investors", "individual investors",
+        "angel investors",
+    }
     companies = (
         db.query(Company)
         .options(load_only(*_COMPANY_NETWORK_LOAD_ONLY))
         .filter(or_(Company.data_source.is_(None), Company.data_source != 'pitchbook_investor'))
         .all()
     )
+    companies = [c for c in companies if (c.company_name or "").lower() not in _BUCKET_NAMES]
     nodes = []
     links = []
-    company_index: dict[str, int] = {}  # name_lower -> node id
+    # Smart name index keyed on normalized form — collapses "Ford Motor Co.",
+    # "Ford Motors", and "Ford Motor Company" onto a single node. See
+    # backend/routes/partnerships.py for the normalizer.
+    from backend.routes.partnerships import _norm_company_name
+    company_index: dict[str, int] = {}
+    id_alias: dict[int, int] = {}
     virtual_id = -1
     seen_links: set[tuple] = set()
 
     for c in companies:
+        key = _norm_company_name(c.company_name)
+        if not key:
+            continue
+        existing = company_index.get(key)
+        if existing is not None:
+            id_alias[c.id] = existing
+            continue
+        company_index[key] = c.id
         nodes.append({
             "id": c.id,
             "name": c.company_name,
@@ -394,18 +407,24 @@ def companies_network(db: Session = Depends(get_db)):
             "segment": c.supply_chain_segment,
             "in_db": True,
         })
-        company_index[c.company_name.lower()] = c.id
 
-    # Build links; create virtual nodes for external partners not in DB
+    def _canon(cid: int) -> int:
+        return id_alias.get(cid, cid)
+
     for c in companies:
+        src_cid = _canon(c.id)
         partners = _safe_json(c.announced_partners, [])
         for p in partners:
             partner_name = (p.get("partner_name") or "").strip()
             if not partner_name:
                 continue
-            pid = company_index.get(partner_name.lower())
+            if partner_name.lower() in _BUCKET_NAMES:
+                continue
+            norm = _norm_company_name(partner_name)
+            if not norm:
+                continue
+            pid = company_index.get(norm)
             if pid is None:
-                # Create a virtual node for this external partner
                 pid = virtual_id
                 virtual_id -= 1
                 nodes.append({
@@ -416,13 +435,15 @@ def companies_network(db: Session = Depends(get_db)):
                     "segment": None,
                     "in_db": False,
                 })
-                company_index[partner_name.lower()] = pid
+                company_index[norm] = pid
+            if pid == src_cid:
+                continue
 
-            link_key = (min(c.id, pid), max(c.id, pid), p.get("type_of_partnership", "Other"))
+            link_key = (min(src_cid, pid), max(src_cid, pid), p.get("type_of_partnership", "Other"))
             if link_key not in seen_links:
                 seen_links.add(link_key)
                 links.append({
-                    "source": c.id,
+                    "source": src_cid,
                     "target": pid,
                     "type": p.get("type_of_partnership", "Other"),
                     "scale": p.get("scale"),
@@ -852,6 +873,15 @@ def enrich_sec_edgar(db: Session = Depends(get_db)):
     from backend.sec_edgar import run_enrichment
     result = run_enrichment(db)
     return result
+
+
+@router.post("/prune-investors")
+def prune_investor_rows(db: Session = Depends(get_db)):
+    """Remove VC / investor / holdco rows that leaked in via PitchBook or
+    NAATBATT/BBD uploads. Heuristic + cascade rules live in
+    ``backend/prune_investors.py``."""
+    from backend.prune_investors import prune_investors
+    return prune_investors(db)
 
 
 @router.post("/dedupe")

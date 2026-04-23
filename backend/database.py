@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
 from backend.config import DATABASE_URL
 
@@ -17,6 +17,16 @@ if is_sqlite:
 
 if is_sqlite:
     engine = create_engine(_db_url, connect_args=connect_args, echo=False)
+
+    # SQLite doesn't enforce foreign keys unless PRAGMA is set per connection,
+    # which means CASCADE deletes (e.g. Partnership → PartnershipMember) are
+    # silently skipped and orphan rows accumulate. Flip it on for every
+    # connection the pool hands out.
+    @event.listens_for(engine, "connect")
+    def _sqlite_fk_on(dbapi_conn, _record):
+        cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA foreign_keys=ON")
+        cur.close()
 else:
     # PostgreSQL: keep a pool of persistent connections so each request
     # doesn't pay the ~100-200ms cost of a new TCP handshake to Supabase.
@@ -97,12 +107,39 @@ def migrate_db():
                     conn.commit()
 
     # watchlist.user_id was added after the initial ship. Back-fill on old DBs
-    # so per-user watchlist queries don't crash with "no such column".
+    # so per-user watchlist queries don't crash with "no such column". We also
+    # need to drop the legacy single-column UNIQUE(company_id) constraint —
+    # that made sense pre-auth when the watchlist was global, but today
+    # different users can (and must) be able to watch the same company.
     with engine.connect() as conn:
         if dialect == "sqlite":
             existing = {row[1] for row in conn.execute(text("PRAGMA table_info(watchlist)"))}
             if "user_id" not in existing:
                 conn.execute(text("ALTER TABLE watchlist ADD COLUMN user_id TEXT"))
+                conn.commit()
+            # SQLite can't drop a column-level UNIQUE in place — detect + recreate.
+            schema = conn.execute(
+                text("SELECT sql FROM sqlite_master WHERE type='table' AND name='watchlist'"),
+            ).scalar() or ""
+            if "UNIQUE (company_id)" in schema.replace("  ", " "):
+                conn.execute(text("ALTER TABLE watchlist RENAME TO watchlist__legacy"))
+                conn.execute(text(
+                    "CREATE TABLE watchlist ("
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                    "company_id INTEGER NOT NULL, "
+                    "user_id TEXT, "
+                    "added_at TEXT, "
+                    "FOREIGN KEY(company_id) REFERENCES companies(id))"
+                ))
+                conn.execute(text(
+                    "INSERT INTO watchlist (id, company_id, user_id, added_at) "
+                    "SELECT id, company_id, user_id, added_at FROM watchlist__legacy"
+                ))
+                conn.execute(text("DROP TABLE watchlist__legacy"))
+                conn.execute(text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS ux_watchlist_user_company "
+                    "ON watchlist (user_id, company_id)"
+                ))
                 conn.commit()
         elif dialect == "postgresql":
             existing = {
@@ -114,6 +151,25 @@ def migrate_db():
             if "user_id" not in existing:
                 conn.execute(text("ALTER TABLE watchlist ADD COLUMN user_id TEXT"))
                 conn.commit()
+            # Drop any UNIQUE constraint that targets only company_id.
+            rows = conn.execute(text(
+                "SELECT tc.constraint_name "
+                "FROM information_schema.table_constraints tc "
+                "JOIN information_schema.constraint_column_usage ccu "
+                "  ON tc.constraint_name = ccu.constraint_name "
+                "WHERE tc.table_name = 'watchlist' AND tc.constraint_type = 'UNIQUE' "
+                "  AND ccu.column_name = 'company_id' "
+                "GROUP BY tc.constraint_name "
+                "HAVING COUNT(*) = 1"
+            )).fetchall()
+            for (cname,) in rows:
+                conn.execute(text(f'ALTER TABLE watchlist DROP CONSTRAINT "{cname}"'))
+                conn.commit()
+            conn.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_watchlist_user_company "
+                "ON watchlist (user_id, company_id)"
+            ))
+            conn.commit()
 
     # Ensure filter-column indices exist (idempotent via IF NOT EXISTS)
     filter_indices = [

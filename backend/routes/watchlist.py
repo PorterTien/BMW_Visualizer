@@ -1,13 +1,14 @@
 """Watchlist CRUD + digest endpoints — shared team list (no auth required)."""
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from backend._util import safe_json
 from backend.database import get_db
 from backend.models import Company, WatchlistDigest, WatchlistEntry
 
@@ -56,7 +57,13 @@ def add_to_watchlist(company_id: int, db: Session = Depends(get_db)):
         added_at=datetime.now(timezone.utc).isoformat(),
     )
     db.add(entry)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Idempotent: a concurrent click or a legacy unique constraint racing
+        # with the migration should return success, not a 500.
+        db.rollback()
+        return {"status": "already_watching", "company_id": company_id}
     return {"status": "added", "company_id": company_id}
 
 
@@ -98,7 +105,7 @@ def get_latest_digest(db: Session = Depends(get_db)):
             "company_name": d.company_name,
             "run_date": d.run_date,
             "has_breaking": bool(d.has_breaking),
-            "articles": json.loads(d.articles_json or "[]"),
+            "articles": safe_json(d.articles_json, []),
             "created_at": d.created_at,
         })
     return results

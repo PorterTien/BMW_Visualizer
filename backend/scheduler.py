@@ -1,4 +1,4 @@
-"""APScheduler background job for weekly NAATBatt refresh."""
+"""APScheduler background jobs for daily NAATBatt refresh + watchlist digest."""
 from __future__ import annotations
 
 import logging
@@ -9,6 +9,10 @@ from apscheduler.triggers.cron import CronTrigger
 log = logging.getLogger(__name__)
 
 _scheduler: BackgroundScheduler | None = None
+
+# Job ids — shared between add_job and get_next_run_time so they never drift.
+_JOB_ID_REFRESH = "naatbatt_daily_refresh"
+_JOB_ID_DIGEST = "watchlist_daily_digest"
 
 
 def _run_watchlist_digest():
@@ -49,13 +53,13 @@ def start_scheduler():
     _scheduler.add_job(
         _run_refresh,
         trigger=CronTrigger(hour=3, minute=0),  # every day at 03:00 UTC
-        id="naatbatt_daily_refresh",
+        id=_JOB_ID_REFRESH,
         replace_existing=True,
     )
     _scheduler.add_job(
         _run_watchlist_digest,
         trigger=CronTrigger(hour=7, minute=0),  # every day at 7am UTC
-        id="watchlist_daily_digest",
+        id=_JOB_ID_DIGEST,
         replace_existing=True,
     )
     _scheduler.start()
@@ -72,7 +76,7 @@ def stop_scheduler():
 def get_next_run_time() -> str | None:
     if _scheduler is None:
         return None
-    job = _scheduler.get_job("naatbatt_weekly_refresh")
+    job = _scheduler.get_job(_JOB_ID_REFRESH)
     if job and job.next_run_time:
         return job.next_run_time.isoformat()
     return None

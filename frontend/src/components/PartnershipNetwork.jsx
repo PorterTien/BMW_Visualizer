@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback, useMemo, memo } from 'react'
-import { getPartnershipGraph, getCompaniesNetwork, enrichPartnershipNetwork, getJob } from '../api/client'
+import { getPartnershipGraph, getCompaniesNetwork, enrichPartnershipNetwork, getJob, bustCache } from '../api/client'
 import { forceCollide } from 'd3-force'
 
 /* ── Constants ── */
@@ -145,15 +145,28 @@ function PartnershipNetwork({ onSelectCompany }) {
   // tooltipSetterRef: imperative channel to HoverTooltip — avoids triggering parent re-renders on hover
   const hoveredNodeRef = useRef(null)
   const hoveredConnectedRef = useRef(null)  // Set of node IDs connected to hovered node (incl. itself), null when no hover
+  // Hovered legend row (partnership type). When set, paintLink dims every
+  // link whose type doesn't match so only that category pops.
+  const hoveredLinkTypeRef = useRef(null)
+  const [hoveredLinkType, setHoveredLinkType] = useState(null)
   const tooltipSetterRef = useRef(null)
   // State version counter — incremented on hover change so paintNode/paintLink are recreated
   // with a new function reference, forcing react-force-graph to pick up the latest callbacks.
   const [hovVersion, setHovVersion] = useState(0)
-  const clickedNodeRef = useRef(null)   // mirrors clickedNode state for canvas use
+  // Selected-node state. The graph supports multi-select: every node click
+  // appends to the trail. The most recent click is the "focused" node —
+  // that's whose partnerships the side panel displays. Highlight math uses
+  // the union of every selected node's neighborhood, so you can click
+  // company → counterparty → counterparty's counterparty and see the whole
+  // chain light up.
+  const clickedNodeRef = useRef(null)             // focused (most recent) id
+  const selectedIdsRef = useRef(new Set())        // full trail of clicked ids
+  const clickedConnectedRef = useRef(null)        // union of neighbor ids + selected
 
-  // Clicked-node: store only the ID (never store the mutable D3 node object in state)
-  const [clickedNodeId, setClickedNodeId] = useState(null)
-  clickedNodeRef.current = clickedNodeId
+  const [focusedNodeId, setFocusedNodeId] = useState(null)
+  const [selectedIds, setSelectedIds] = useState(() => new Set())
+  clickedNodeRef.current = focusedNodeId
+  selectedIdsRef.current = selectedIds
 
   // Clicked-link detail panel
   const [clickedLink, setClickedLink] = useState(null)
@@ -181,20 +194,34 @@ function PartnershipNetwork({ onSelectCompany }) {
     try {
       const { data } = await enrichPartnershipNetwork()
       const jobId = data.job_id
+      let consecutiveErrors = 0
       classifyPollRef.current = setInterval(async () => {
         try {
           const { data: job } = await getJob(jobId)
+          consecutiveErrors = 0
           if (job.status === 'complete') {
             clearInterval(classifyPollRef.current)
             setClassifyState('done')
             setClassifyResult(job.result || {})
             // Reload graph to reflect new classifications
-            getPartnershipGraph().then(({ data: g }) => setGraphData(g)).catch(() => {})
+            bustCache('partnerships:graph')
+            getPartnershipGraph()
+              .then(({ data: g }) => setGraphData(g))
+              .catch(() => {})
           } else if (job.status === 'failed') {
             clearInterval(classifyPollRef.current)
             setClassifyState('error')
           }
-        } catch (_) {}
+        } catch (_) {
+          // Give the network a few retries before giving up so a flapping
+          // connection doesn't kill an otherwise-healthy job, but don't
+          // poll forever.
+          consecutiveErrors += 1
+          if (consecutiveErrors >= 5) {
+            clearInterval(classifyPollRef.current)
+            setClassifyState('error')
+          }
+        }
       }, 3000)
     } catch (_) {
       setClassifyState('error')
@@ -290,32 +317,78 @@ function PartnershipNetwork({ onSelectCompany }) {
 
   useEffect(() => { fgRef.current?.refresh() }, [dark])
 
+  // Recompute the dim-set from an arbitrary collection of selected ids.
+  const recomputeConnected = useCallback((ids) => {
+    if (!ids.size) {
+      clickedConnectedRef.current = null
+      return
+    }
+    const connected = new Set(ids)
+    displayGraphRef.current.links.forEach((l) => {
+      const s = typeof l.source === 'object' ? l.source.id : l.source
+      const t = typeof l.target === 'object' ? l.target.id : l.target
+      if (ids.has(s)) connected.add(t)
+      if (ids.has(t)) connected.add(s)
+    })
+    clickedConnectedRef.current = connected
+  }, [])
+
   const handleNodeClick = useCallback((node) => {
     // Defer state updates so D3 can finish processing its click event first
     setTimeout(() => {
       if (node.id === INVESTOR_META_ID) {
         setInvestorGroup(node._investorList || [])
         setInvestorPanelOpen(true)
-        setClickedNodeId(null)
+        setFocusedNodeId(null)
         clickedNodeRef.current = null
+        setSelectedIds(new Set())
+        selectedIdsRef.current = new Set()
+        clickedConnectedRef.current = null
         setClickedLink(null)
       } else {
-        setClickedNodeId(node.id)
+        // Append to the multi-select trail. Clicking the same node again is
+        // a no-op on the set but refocuses it so the panel updates.
+        const next = new Set(selectedIdsRef.current)
+        next.add(node.id)
+        selectedIdsRef.current = next
+        setSelectedIds(next)
+        setFocusedNodeId(node.id)
         clickedNodeRef.current = node.id
+        recomputeConnected(next)
         setClickedLink(null)
         setInvestorPanelOpen(false)
-        if (node.in_db !== false) {
-          onSelectCompany?.(node.id)
-        }
+        setHovVersion((v) => v + 1)
       }
     }, 0)
-  }, [onSelectCompany])
+  }, [recomputeConnected])
+
+  // Remove a node from the multi-select (used by the panel's chip ✕).
+  const deselectNode = useCallback((id) => {
+    const next = new Set(selectedIdsRef.current)
+    next.delete(id)
+    selectedIdsRef.current = next
+    setSelectedIds(next)
+    if (clickedNodeRef.current === id) {
+      const last = [...next].pop() ?? null
+      clickedNodeRef.current = last
+      setFocusedNodeId(last)
+    }
+    recomputeConnected(next)
+    setHovVersion((v) => v + 1)
+  }, [recomputeConnected])
+
+  const clearSelection = useCallback(() => {
+    selectedIdsRef.current = new Set()
+    setSelectedIds(new Set())
+    clickedNodeRef.current = null
+    setFocusedNodeId(null)
+    clickedConnectedRef.current = null
+    setHovVersion((v) => v + 1)
+  }, [])
 
   const handleLinkClick = useCallback((link) => {
     setTimeout(() => {
       setClickedLink(link)
-      setClickedNodeId(null)
-      clickedNodeRef.current = null
       setInvestorPanelOpen(false)
     }, 0)
   }, [])
@@ -417,6 +490,12 @@ function PartnershipNetwork({ onSelectCompany }) {
     setHovVersion(v => v + 1)
     tooltipSetterRef.current?.(node || null)
   }, [])
+
+  const handleLinkHover = useCallback((link) => {
+    if (containerRef.current) {
+      containerRef.current.style.cursor = link ? 'pointer' : (panMode ? 'grab' : 'default')
+    }
+  }, [panMode])
 
   const handleZoom = useCallback(({ k }) => { zoomLevelRef.current = k }, [])
 
@@ -593,16 +672,39 @@ function PartnershipNetwork({ onSelectCompany }) {
     return { nodes, links }
   }, [filteredGraph])  // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Re-fit on filter change — unpin nodes so they can re-layout, and reheat the
-  // simulation so the collide + charge forces actually push them apart again
-  // (without reheat they stay pinned-in-place at their previous positions).
+  // When the user searches, compute the set of ids they actually want to see
+  // (name matches; neighbors get shown by the filter above but the camera
+  // should land on the *matches*, not the neighborhood bounding box).
+  const searchMatchIds = useMemo(() => {
+    if (!searchQuery) return null
+    const q = searchQuery.toLowerCase()
+    const ids = new Set()
+    filteredGraph.nodes.forEach((n) => {
+      if (n.name && n.name.toLowerCase().includes(q)) ids.add(n.id)
+    })
+    return ids.size ? ids : null
+  }, [searchQuery, filteredGraph])
+
+  // Re-fit on filter/search change — unpin nodes so they can re-layout, and
+  // reheat the simulation so the collide + charge forces actually push them
+  // apart again (without reheat they stay pinned-in-place at their previous
+  // positions). We fire zoomToFit several times as the simulation settles so
+  // the viewport tracks the matches instead of snapping once before forces
+  // have resolved. When a search query is active we pass a predicate so the
+  // camera frames just the matched nodes rather than the whole neighborhood.
   useEffect(() => {
     fitDoneRef.current = false
     displayGraphRef.current.nodes.forEach(n => { n.fx = undefined; n.fy = undefined })
     fgRef.current?.d3ReheatSimulation?.()
-    const t = setTimeout(() => fgRef.current?.zoomToFit(400, 60), 800)
-    return () => clearTimeout(t)
-  }, [filteredGraph])
+    const predicate = searchMatchIds
+      ? (node) => searchMatchIds.has(node.id)
+      : undefined
+    const padding = searchMatchIds ? 120 : 60
+    const timers = [300, 900, 1600].map((ms) =>
+      setTimeout(() => fgRef.current?.zoomToFit(500, padding, predicate), ms)
+    )
+    return () => timers.forEach(clearTimeout)
+  }, [filteredGraph, searchMatchIds])
 
   // Keep ref updated so onEngineStop can access current nodes without a closure dep
   displayGraphRef.current = displayGraph
@@ -646,9 +748,14 @@ function PartnershipNetwork({ onSelectCompany }) {
       : typeColors(node.type, dark, node.name || '')
     const isSearch  = searchQuery && node.name.toLowerCase().includes(searchQuery.toLowerCase())
     const isHov     = hoveredNodeRef.current?.id === node.id
-    const isClicked = clickedNodeRef.current === node.id
+    const isSelected = selectedIdsRef.current.has(node.id)
+    const isFocused  = clickedNodeRef.current === node.id
+    const isClicked = isSelected  // any selected node gets the ring/bold label
     const connected = hoveredConnectedRef.current
-    const isDimmed  = connected != null && !connected.has(node.id)
+    const clickConnected = clickedConnectedRef.current
+    const isDimmed = connected != null
+      ? !connected.has(node.id)
+      : (clickConnected != null && !clickConnected.has(node.id))
 
     // Dimmed — draw faint circle only, skip glow and label
     if (isDimmed) {
@@ -729,13 +836,24 @@ function PartnershipNetwork({ onSelectCompany }) {
 
     const hovConn = hoveredConnectedRef.current
     const hovId   = hoveredNodeRef.current?.id
-    const isHighlighted = hovConn == null || s.id === hovId || t.id === hovId
+    const hovLinkType = hoveredLinkTypeRef.current
+    const selected = selectedIdsRef.current
+    const hasSelection = selected.size > 0
+    const touchesClicked = hasSelection && (selected.has(s.id) || selected.has(t.id))
+    const matchesHoveredType = hovLinkType == null || link.type === hovLinkType
+    const isHighlighted = (hovConn == null
+      ? (!hasSelection || touchesClicked)
+      : (s.id === hovId || t.id === hovId)
+    ) && matchesHoveredType
 
     const { color, alpha } = linkColor(link.type, link.date, dark)
     const effectiveAlpha = isHighlighted ? alpha : alpha * 0.06
+    const emphasize = (touchesClicked && hovConn == null) || (hovLinkType != null && link.type === hovLinkType)
 
     ctx.strokeStyle = color
-    ctx.lineWidth = Math.max(0.8, 1.8 / globalScale)
+    ctx.lineWidth = emphasize
+      ? Math.max(1.6, 3.2 / globalScale)
+      : Math.max(0.8, 1.8 / globalScale)
     ctx.globalAlpha = effectiveAlpha
     ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.quadraticCurveTo(cpX, cpY, t.x, t.y); ctx.stroke()
 
@@ -766,7 +884,28 @@ function PartnershipNetwork({ onSelectCompany }) {
     ctx.globalAlpha = 1
   }, [scaleMetric, dark, maxValues, linkCounts, hovVersion])
 
-  /* ── Hit area ── */
+  /* ── Hit areas ──
+   * Because we use `linkCanvasObjectMode='replace'`, react-force-graph can't
+   * infer a click target from its default line. Paint a fat invisible curve
+   * matching paintLink's Bezier so link clicks / hovers register within ~12px. */
+  const pointerAreaLink = useCallback((link, color, ctx) => {
+    const s = link.source, t = link.target
+    if (!s || !t || typeof s !== 'object' || typeof t !== 'object') return
+    if (s.x == null || t.x == null) return
+    const dx = t.x - s.x, dy = t.y - s.y
+    const dist = Math.sqrt(dx * dx + dy * dy)
+    if (dist < 1) return
+    const nx = -dy / dist, ny = dx / dist
+    const curve = link._curve || 0.15
+    const sign = (s.id ?? 0) < (t.id ?? 0) ? 1 : -1
+    const cpX = (s.x + t.x) / 2 + nx * curve * dist * sign
+    const cpY = (s.y + t.y) / 2 + ny * curve * dist * sign
+    ctx.strokeStyle = color
+    ctx.lineWidth = 12
+    ctx.lineCap = 'round'
+    ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.quadraticCurveTo(cpX, cpY, t.x, t.y); ctx.stroke()
+  }, [])
+
   const pointerArea = useCallback((node, color, ctx) => {
     if (node.x == null || node.y == null) return
     const r = nodeRadius(node, scaleMetric, maxValues, linkCounts) + 4
@@ -1031,17 +1170,45 @@ function PartnershipNetwork({ onSelectCompany }) {
         )}
 
         {/* Legend */}
-        <div className={`${dark ? 'bg-[#0D1B2E]' : 'bg-bmw-gray-light'} border-b ${borderClr} px-4 py-1.5 flex items-center gap-4 flex-wrap`}>
+        <div
+          className={`${dark ? 'bg-[#0D1B2E]' : 'bg-bmw-gray-light'} border-b ${borderClr} px-4 py-1.5 flex items-center gap-4 flex-wrap`}
+          onMouseLeave={() => {
+            hoveredLinkTypeRef.current = null
+            setHoveredLinkType(null)
+            setHovVersion((v) => v + 1)
+          }}
+        >
           <span className={`text-xs font-medium ${textMuted} uppercase tracking-wider shrink-0`}>Arrows:</span>
-          {Object.entries(LINK_TYPE_COLORS).map(([key, { base, label }]) => (
-            <div key={key} className="flex items-center gap-1">
-              <svg width="18" height="8" viewBox="0 0 18 8" className="inline-block shrink-0">
-                <path d="M1 7 Q9 -1 17 7" stroke={base} fill="none" strokeWidth="1.5" opacity="0.8" />
-                <polygon points="17,7 13,5.5 14,8" fill={base} opacity="0.8" />
-              </svg>
-              <span className={`text-xs ${textNormal} whitespace-nowrap`}>{label}</span>
-            </div>
-          ))}
+          {Object.entries(LINK_TYPE_COLORS).map(([key, { base, label }]) => {
+            const isActive = hoveredLinkType === key
+            const isDimmed = hoveredLinkType && !isActive
+            return (
+              <div
+                key={key}
+                onMouseEnter={() => {
+                  hoveredLinkTypeRef.current = key
+                  setHoveredLinkType(key)
+                  setHovVersion((v) => v + 1)
+                }}
+                className={`flex items-center gap-1 px-1.5 py-0.5 rounded cursor-pointer transition-all ${
+                  isActive ? (dark ? 'bg-[#1E293B]' : 'bg-white shadow-sm') : isDimmed ? 'opacity-40' : ''
+                }`}
+                title={`Highlight ${label} connections`}
+              >
+                <svg
+                  width="18"
+                  height="8"
+                  viewBox="0 0 18 8"
+                  className="inline-block shrink-0 transition-transform"
+                  style={{ transform: isActive ? 'scale(1.25)' : 'scale(1)' }}
+                >
+                  <path d="M1 7 Q9 -1 17 7" stroke={base} fill="none" strokeWidth={isActive ? 2 : 1.5} opacity="0.9" />
+                  <polygon points="17,7 13,5.5 14,8" fill={base} opacity="0.9" />
+                </svg>
+                <span className={`text-xs ${textNormal} whitespace-nowrap ${isActive ? 'font-semibold' : ''}`}>{label}</span>
+              </div>
+            )
+          })}
           <div className="flex items-center gap-1">
             <span className={`w-2.5 h-2.5 rounded-full inline-block border-2 border-dashed shrink-0 ${dark ? 'border-gray-500' : 'border-gray-400'}`} />
             <span className={`text-xs ${textMuted}`}>External</span>
@@ -1060,6 +1227,7 @@ function PartnershipNetwork({ onSelectCompany }) {
             linkCanvasObject={paintLink}
             linkCanvasObjectMode={() => 'replace'}
             nodePointerAreaPaint={pointerArea}
+            linkPointerAreaPaint={pointerAreaLink}
             enableZoomPanInteraction={true}
             enableNodeDrag={!panMode}
             onNodeDrag={handleNodeDrag}
@@ -1067,6 +1235,7 @@ function PartnershipNetwork({ onSelectCompany }) {
             onNodeClick={handleNodeClick}
             onLinkClick={handleLinkClick}
             onNodeHover={handleNodeHover}
+            onLinkHover={handleLinkHover}
             onZoom={handleZoom}
             backgroundColor={bg}
             cooldownTicks={150}
@@ -1102,9 +1271,32 @@ function PartnershipNetwork({ onSelectCompany }) {
             />
           )}
 
+          {/* Node click panel — lists all partnerships the clicked company
+              is a member of. Button inside opens the full company profile. */}
+          {focusedNodeId != null && !clickedLink && (
+            <NodePartnershipsPanel
+              node={displayGraph.nodes.find((n) => n.id === focusedNodeId)}
+              nodes={displayGraph.nodes}
+              links={displayGraph.links}
+              dark={dark}
+              selectedIds={selectedIds}
+              onClose={clearSelection}
+              onFocusCompany={(id) => {
+                // Clicking a partner in the panel adds them to the trail and
+                // refocuses the panel on them — same semantics as clicking
+                // the node directly on the canvas.
+                const node = displayGraph.nodes.find((n) => n.id === id)
+                if (node) handleNodeClick(node)
+              }}
+              onDeselect={deselectNode}
+              onOpenCompany={(id) => onSelectCompany?.(id)}
+              onOpenLink={(link) => setClickedLink(link)}
+            />
+          )}
+
           {/* Interaction hint */}
           <div className={`absolute bottom-4 right-4 text-[10px] pointer-events-none select-none ${dark ? 'text-gray-600' : 'text-gray-400'}`}>
-            {panMode ? 'Pan mode: drag to pan · Scroll to zoom' : 'Scroll to zoom · Click node to view company · Click link for details'}
+            {panMode ? 'Pan mode: drag to pan · Scroll to zoom' : 'Scroll to zoom · Click node for partnerships · Click link for deal details'}
           </div>
 
           {/* Investor panel */}
@@ -1146,6 +1338,174 @@ function PartnershipNetwork({ onSelectCompany }) {
 export default memo(PartnershipNetwork)
 
 /* ── Sub-components ── */
+
+/**
+ * NodePartnershipsPanel — shown when a user clicks a company node.
+ * Lists every deal that company is part of (type, stage, date, deal value,
+ * counterparty) with a "View full profile" button for the selected company
+ * and per-row buttons to open each partner's profile.
+ */
+function NodePartnershipsPanel({
+  node, nodes, links, dark, selectedIds,
+  onClose, onFocusCompany, onDeselect, onOpenCompany, onOpenLink,
+}) {
+  if (!node) return null
+  const selected = selectedIds || new Set()
+  const trail = nodes ? nodes.filter((n) => selected.has(n.id)) : []
+
+  const relatedLinks = (links || []).filter((l) => {
+    const sId = typeof l.source === 'object' ? l.source.id : l.source
+    const tId = typeof l.target === 'object' ? l.target.id : l.target
+    return sId === node.id || tId === node.id
+  })
+
+  const partnerOf = (l) => {
+    const src = typeof l.source === 'object' ? l.source : null
+    const tgt = typeof l.target === 'object' ? l.target : null
+    const srcId = src ? src.id : l.source
+    return srcId === node.id ? (tgt || { id: l.target, name: String(l.target), in_db: false })
+                             : (src || { id: l.source, name: String(l.source), in_db: false })
+  }
+
+  const panelBg = dark ? 'bg-[#1E293B] border-gray-600' : 'bg-white border-bmw-border'
+  const headBg  = dark ? 'bg-[#263345] border-gray-700' : 'bg-[#F7F9FB] border-gray-200'
+  const rowBg   = dark ? 'bg-[#1A2535] border-gray-700 hover:bg-[#243244]'
+                       : 'bg-gray-50 border-gray-100 hover:bg-blue-50'
+  const textPri = dark ? 'text-gray-100' : 'text-gray-800'
+  const textMut = dark ? 'text-gray-400' : 'text-gray-500'
+
+  return (
+    <div className={`absolute top-4 right-4 z-20 rounded-xl shadow-xl border w-96 max-h-[85vh] flex flex-col overflow-hidden ${panelBg}`}>
+      <div className={`px-4 py-3 border-b flex items-start justify-between gap-3 ${headBg}`}>
+        <div className="min-w-0 flex-1">
+          <div className={`font-bold text-sm leading-tight truncate ${textPri}`}>{node.name}</div>
+          <div className={`text-[11px] mt-0.5 ${textMut}`}>
+            {relatedLinks.length} partnership{relatedLinks.length === 1 ? '' : 's'}
+            {node.type && node.type !== 'other' && <span> · {node.type}</span>}
+          </div>
+        </div>
+        <button onClick={onClose} className={`text-lg leading-none shrink-0 ${textMut} hover:text-red-400`}>✕</button>
+      </div>
+
+      {trail.length > 1 && (
+        <div className={`px-3 py-2 border-b flex flex-wrap gap-1 ${dark ? 'border-gray-700' : 'border-gray-200'}`}>
+          <span className={`text-[10px] self-center mr-1 ${textMut}`}>Trail:</span>
+          {trail.map((n) => {
+            const isFocus = n.id === node.id
+            return (
+              <span
+                key={n.id}
+                className={`inline-flex items-center gap-1 text-[10px] pl-2 pr-1 py-0.5 rounded-full border ${
+                  isFocus
+                    ? 'bg-bmw-blue text-white border-bmw-blue'
+                    : (dark ? 'bg-[#1A2535] text-gray-300 border-gray-600' : 'bg-gray-100 text-gray-700 border-gray-200')
+                }`}
+              >
+                <button
+                  onClick={() => !isFocus && onFocusCompany?.(n.id)}
+                  className={isFocus ? 'cursor-default' : 'hover:underline'}
+                  title={isFocus ? 'Focused' : 'Focus on this company'}
+                >
+                  {n.name.length > 18 ? n.name.slice(0, 16) + '…' : n.name}
+                </button>
+                <button
+                  onClick={() => onDeselect?.(n.id)}
+                  className={isFocus ? 'text-white/80 hover:text-white' : (dark ? 'text-gray-500 hover:text-red-400' : 'text-gray-400 hover:text-red-500')}
+                  title="Remove from selection"
+                >✕</button>
+              </span>
+            )
+          })}
+        </div>
+      )}
+
+      {node.in_db !== false && node.id > 0 && (
+        <div className={`px-4 py-2.5 border-b ${dark ? 'border-gray-700' : 'border-gray-200'}`}>
+          <button
+            onClick={() => onOpenCompany?.(node.id)}
+            className="w-full text-center text-xs font-semibold py-2 rounded-lg bg-bmw-blue text-white hover:bg-blue-700 transition-colors"
+          >
+            View full company profile →
+          </button>
+        </div>
+      )}
+
+      <div className="overflow-y-auto flex-1">
+        {relatedLinks.length === 0 ? (
+          <div className={`px-4 py-6 text-center text-xs ${textMut}`}>No partnerships recorded.</div>
+        ) : (
+          <ul className="px-4 py-3 space-y-2">
+            {relatedLinks.map((l, idx) => {
+              const partner = partnerOf(l)
+              const info = LINK_TYPE_COLORS[l.type] || LINK_TYPE_COLORS.other
+              return (
+                <li key={`${l.partnership_id ?? 'legacy'}-${idx}`}
+                    className={`rounded-lg border ${rowBg} transition-colors`}
+                >
+                  <button
+                    onClick={() => onOpenLink?.(l)}
+                    className="w-full text-left px-3 py-2.5"
+                  >
+                    <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                      <span
+                        className="text-[10px] px-2 py-0.5 rounded-full font-medium text-white"
+                        style={{ backgroundColor: info.base }}
+                      >
+                        {info.label}
+                      </span>
+                      {l.stage && (
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full capitalize ${
+                          l.stage === 'active'    ? 'bg-green-100 text-green-700' :
+                          l.stage === 'signed'    ? 'bg-blue-100 text-blue-700'   :
+                          l.stage === 'announced' ? 'bg-yellow-100 text-yellow-700':
+                          l.stage === 'dissolved' ? 'bg-red-100 text-red-700'     :
+                                                    'bg-gray-100 text-gray-600'
+                        }`}>{l.stage}</span>
+                      )}
+                      {l.date && <span className={`text-[10px] ${textMut}`}>{l.date}</span>}
+                      {l.deal_value != null && (
+                        <span className={`text-[10px] font-semibold ml-auto ${textPri}`}>
+                          {fmtVal(l.deal_value)}
+                        </span>
+                      )}
+                    </div>
+                    <div className={`text-sm font-semibold leading-tight ${textPri} truncate`}>
+                      {partner.name}
+                    </div>
+                    {l.scope && (
+                      <div className={`text-[11px] mt-1 leading-relaxed line-clamp-2 ${textMut}`}>
+                        {l.scope}
+                      </div>
+                    )}
+                  </button>
+                  {partner.in_db !== false && partner.id > 0 && (
+                    <div className={`border-t px-3 py-1.5 flex items-center justify-between gap-2 ${dark ? 'border-gray-700' : 'border-gray-100'}`}>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onFocusCompany?.(partner.id) }}
+                        className={`text-[11px] font-medium ${selected.has(partner.id) ? (dark ? 'text-gray-500' : 'text-gray-400') : 'text-bmw-blue hover:underline'}`}
+                        disabled={selected.has(partner.id)}
+                        title={selected.has(partner.id) ? 'Already selected' : `Explore ${partner.name}'s partnerships`}
+                      >
+                        {selected.has(partner.id) ? '✓ Selected' : `Explore ${partner.name.length > 18 ? partner.name.slice(0, 16) + '…' : partner.name} →`}
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onOpenCompany?.(partner.id) }}
+                        className={`text-[11px] ${textMut} hover:underline`}
+                        title="Open full profile"
+                      >
+                        Profile →
+                      </button>
+                    </div>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </div>
+    </div>
+  )
+}
 
 /**
  * LinkDetailPanel — shown when a user clicks a partnership connection line.

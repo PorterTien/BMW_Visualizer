@@ -1,23 +1,12 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react'
 import { getCompanies, addToWatchlist, removeFromWatchlist, getWatchlist } from '../api/client'
+import { COUNTRY_ALIASES } from '../utils/countries'
+import { faviconUrl as getFaviconUrl } from '../utils/favicon'
 
 const PAGE_SIZE = 50
 
-const COUNTRY_ALIASES = {
-  'United States': ['united states', 'us'],
-  'United Kingdom': ['united kingdom', 'uk'],
-  'South Korea': ['south korea', 'republic of korea'],
-}
-
 function safeHostname(url) {
   try { return new URL(url).hostname.replace('www.', '') } catch { return url }
-}
-
-function getFaviconUrl(website) {
-  try {
-    const domain = new URL(website).hostname.replace(/^www\./, '')
-    return `https://www.google.com/s2/favicons?sz=64&domain=${domain}`
-  } catch { return null }
 }
 
 // Deterministic pastel color from company name
@@ -41,6 +30,8 @@ function CompanyLogo({ name, website }) {
           src={src}
           alt=""
           className="w-4 h-4 object-contain"
+          referrerPolicy="no-referrer"
+          loading="lazy"
           onError={() => setFailed(true)}
         />
       </div>
@@ -193,17 +184,24 @@ export default function CompanyTable({ filters, onOpenCompany }) {
   const [sortKey, setSortKey] = useState('company_name')
   const [sortDir, setSortDir] = useState(1)
   const [page, setPage] = useState(1)
+  const [pageInput, setPageInput] = useState('1')
   const [activeCategory, setActiveCategory] = useState('all')
   const [pageSize, setPageSize] = useState(PAGE_SIZE)
   const [watchedIds, setWatchedIds] = useState(new Set())
   const [watchTogglingId, setWatchTogglingId] = useState(null)
-  const [isAuthed, setIsAuthed] = useState(false)
+  // NOTE(watchlist-auth): Watchlist is temporarily open to everyone (shared
+  // team list). To re-enable per-user sign-in:
+  //   1. Flip WATCHLIST_REQUIRES_AUTH to true below.
+  //   2. Restore the `.catch(() => setIsAuthed(false))` fallback so getWatchlist
+  //      failures mark the user as unauthenticated.
+  //   3. Restore the auth dependency in backend/auth.py (require_user should
+  //      validate the Supabase JWT instead of returning SHARED_USER).
+  const WATCHLIST_REQUIRES_AUTH = false
+  const [isAuthed, setIsAuthed] = useState(!WATCHLIST_REQUIRES_AUTH)
   const [watchError, setWatchError] = useState('')
 
   useEffect(() => {
     setLoading(true)
-    // Load companies and watchlist independently — a 401 on watchlist
-    // (unauthenticated user) must not prevent companies from showing.
     getCompanies({ limit: 2000 })
       .then(({ data: res }) => {
         setCompanies(Array.isArray(res) ? res : res.items ?? [])
@@ -216,7 +214,12 @@ export default function CompanyTable({ filters, onOpenCompany }) {
         setIsAuthed(true)
         setWatchedIds(new Set(wl.map((e) => e.company_id)))
       })
-      .catch(() => setIsAuthed(false)) // 401 = not logged in; fine
+      .catch(() => {
+        // Auth disabled for now — keep the star pressable even if the
+        // watchlist endpoint hiccups. Flip WATCHLIST_REQUIRES_AUTH above
+        // and uncomment the line below to re-enable the auth gate.
+        // setIsAuthed(false)
+      })
   }, [])
 
   // Optimistic toggle: update UI first, then call the API, roll back on
@@ -314,6 +317,9 @@ export default function CompanyTable({ filters, onOpenCompany }) {
   }, [companies, search, filters, sortKey, sortDir, activeCategory])
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize))
+  // Keep the Go-To input's string state synced with the actual `page` so
+  // Prev/Next buttons update the field, but let the user clear/retype freely.
+  useEffect(() => { setPageInput(String(page)) }, [page])
   const paginated = filtered.slice((page - 1) * pageSize, page * pageSize)
   const startIdx = (page - 1) * pageSize
 
@@ -653,13 +659,18 @@ export default function CompanyTable({ filters, onOpenCompany }) {
           type="number"
           min={1}
           max={totalPages}
-          value={page}
+          value={pageInput}
           onChange={(e) => {
+            // `pageInput` is string state so the user can clear the field
+            // and retype; `page` only updates when the value parses.
             const raw = e.target.value
+            setPageInput(raw)
             if (raw === '') return
-            const v = Math.max(1, Math.min(totalPages, Number(raw)))
-            if (!Number.isNaN(v)) setPage(v)
+            const v = Number(raw)
+            if (!Number.isFinite(v)) return
+            setPage(Math.max(1, Math.min(totalPages, Math.floor(v))))
           }}
+          onBlur={() => { if (pageInput === '') setPageInput(String(page)) }}
           className="w-20 border border-bmw-border rounded px-1.5 py-0.5 text-xs bg-white"
           placeholder="Page"
         />

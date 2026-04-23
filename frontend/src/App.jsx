@@ -69,12 +69,14 @@ export default function App() {
           triggerSeed()
             .then(() => {
               seedPollRef.current = setInterval(() => {
-                getSeedStatus().then(({ data: s }) => {
-                  if (s.seeded) {
-                    clearInterval(seedPollRef.current)
-                    setSeedBanner(false)
-                  }
-                })
+                getSeedStatus()
+                  .then(({ data: s }) => {
+                    if (s.seeded) {
+                      clearInterval(seedPollRef.current)
+                      setSeedBanner(false)
+                    }
+                  })
+                  .catch(() => {})   // keep polling through transient errors
               }, 5000)
             })
             .catch(() => setSeedBanner(false))

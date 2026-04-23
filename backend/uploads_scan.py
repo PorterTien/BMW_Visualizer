@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session, load_only
 from backend.config import UPLOAD_DIR
 from backend.dedupe import normalize_name, prune_degenerate_partnerships
 from backend.models import Company
+from backend.prune_investors import is_investor_name
 
 log = logging.getLogger(__name__)
 
@@ -53,6 +54,11 @@ def read_first_column(path: str | Path) -> list[str]:
         if not s or s.lower() in ("nan", "none", "null", "-", "n/a"):
             continue
         if len(s) > 120 or s.lower() in _HEADER_TOKENS:
+            continue
+        # Skip VC / investor / holdco rows — they pollute the battery-company
+        # table. See backend/prune_investors.py for the matching heuristic
+        # and the rerunnable cleanup.
+        if is_investor_name(s):
             continue
         out.append(s)
     return out

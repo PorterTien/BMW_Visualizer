@@ -24,13 +24,7 @@ def _log_task_error(task: asyncio.Task) -> None:
         log.error("Background task %s raised: %s", task.get_name(), task.exception())
 
 
-def _safe_json(val: str | None, default):
-    if not val:
-        return default
-    try:
-        return json.loads(val)
-    except (json.JSONDecodeError, TypeError):
-        return default
+from backend._util import safe_json as _safe_json  # noqa: E402
 
 # In-process cache: at most 500 entries (LRU-eviction via insertion-order dict)
 _THUMB_CACHE_MAX = 500

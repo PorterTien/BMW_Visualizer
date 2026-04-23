@@ -3,6 +3,7 @@ import { MapContainer, TileLayer, CircleMarker, Marker, Popup } from 'react-leaf
 import MarkerClusterGroup from 'react-leaflet-cluster'
 import L from 'leaflet'
 import { getCompaniesMap, getWatchlist, addToWatchlist, removeFromWatchlist } from '../api/client'
+import { COUNTRY_ALIASES } from '../utils/countries'
 
 const LIGHT_TILES = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
 const DARK_TILES = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
@@ -10,12 +11,6 @@ const LIGHT_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">Ope
 const DARK_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>'
 
 const SPLIT_ZOOM = 8
-
-const COUNTRY_ALIASES = {
-  'United States': ['united states', 'us'],
-  'United Kingdom': ['united kingdom', 'uk'],
-  'South Korea': ['south korea', 'republic of korea'],
-}
 
 const TYPE_COLORS = {
   'Raw Materials': '#F59E0B',
@@ -144,8 +139,9 @@ function PopupContent({ c, onSelectCompany, watchlistIds, onToggleWatchlist }) {
 
 /* ── Legend ── */
 
-function Legend({ hoveredType, onHoverType }) {
+function Legend({ hoveredType, pinnedType, onHoverType, onPinType }) {
   const [collapsed, setCollapsed] = React.useState(false)
+  const activeType = pinnedType || hoveredType
   return (
     <div className={`absolute bottom-8 left-4 z-[1000] rounded-lg shadow-lg text-xs border border-bmw-border overflow-hidden transition-colors ${
       collapsed ? 'bg-white' : 'bg-bmw-gray-light'
@@ -154,7 +150,7 @@ function Legend({ hoveredType, onHoverType }) {
         onClick={() => setCollapsed(!collapsed)}
         className="flex items-center justify-between w-full px-3 py-2 font-semibold text-[text-bmw-text-primary] hover:bg-white/80"
       >
-        <span>Company Type</span>
+        <span>Company Type{pinnedType && <span className="ml-1 text-[10px] font-normal text-bmw-blue">📌 {pinnedType}</span>}</span>
         <span className="ml-4 text-gray-400">{collapsed ? '▲' : '▼'}</span>
       </button>
       {!collapsed && (
@@ -163,12 +159,15 @@ function Legend({ hoveredType, onHoverType }) {
           onMouseLeave={() => onHoverType?.(null)}
         >
           {Object.entries(TYPE_COLORS).map(([type, color]) => {
-            const isActive = hoveredType === type
-            const isDimmed = hoveredType && hoveredType !== type
+            const isActive = activeType === type
+            const isDimmed = activeType && activeType !== type
+            const isPinned = pinnedType === type
             return (
               <div
                 key={type}
                 onMouseEnter={() => onHoverType?.(type)}
+                onClick={() => onPinType?.(type)}
+                title={isPinned ? 'Click to unpin' : 'Click to pin highlight'}
                 className={`flex items-center gap-2 px-2 py-0.5 rounded cursor-pointer transition-all ${
                   isActive ? 'bg-gray-100 font-semibold' : isDimmed ? 'opacity-40' : ''
                 }`}
@@ -181,10 +180,19 @@ function Legend({ hoveredType, onHoverType }) {
                     transform: isActive ? 'scale(1.25)' : 'scale(1)',
                   }}
                 />
-                <span className="text-gray-700 capitalize text-[11px]">{type}</span>
+                <span className="text-gray-700 capitalize text-[11px] flex-1">{type}</span>
+                {isPinned && <span className="text-[10px] text-bmw-blue">📌</span>}
               </div>
             )
           })}
+          {pinnedType && (
+            <button
+              onClick={() => onPinType?.(pinnedType)}
+              className="w-full mt-1 text-[10px] text-bmw-blue hover:underline text-left px-2 py-0.5"
+            >
+              Clear pin
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -224,6 +232,11 @@ export default function CompanyMap({ filters, onSelectCompany, highlightName }) 
   const [heatmapMode, setHeatmapMode] = useState(false)
   const [watchlistIds, setWatchlistIds] = useState(new Set())
   const [hoveredType, setHoveredType] = useState(null)
+  // Click-to-pin: when a legend row is clicked, its type stays highlighted
+  // until the user clicks it again (or clicks a different row). Pinned state
+  // takes precedence over hover so the markers don't flicker.
+  const [pinnedType, setPinnedType] = useState(null)
+  const activeType = pinnedType || hoveredType
 
   useEffect(() => {
     getCompaniesMap()
@@ -234,20 +247,27 @@ export default function CompanyMap({ filters, onSelectCompany, highlightName }) 
 
   useEffect(() => {
     getWatchlist()
-      .then(({ data }) => setWatchlistIds(new Set(data.map(w => w.id))))
+      .then(({ data }) => setWatchlistIds(new Set(data.map((w) => w.company_id))))
       .catch(() => {})
   }, [])
 
   const handleToggleWatchlist = useCallback(async (companyId, currentlyStarred) => {
+    // Optimistic update; rollback + re-fetch on failure so the star doesn't
+    // drift out of sync with the server.
+    setWatchlistIds((prev) => {
+      const next = new Set(prev)
+      if (currentlyStarred) next.delete(companyId); else next.add(companyId)
+      return next
+    })
     try {
-      if (currentlyStarred) {
-        await removeFromWatchlist(companyId)
-        setWatchlistIds(prev => { const next = new Set(prev); next.delete(companyId); return next })
-      } else {
-        await addToWatchlist(companyId)
-        setWatchlistIds(prev => new Set([...prev, companyId]))
-      }
-    } catch (_) {}
+      if (currentlyStarred) await removeFromWatchlist(companyId)
+      else await addToWatchlist(companyId)
+    } catch (err) {
+      console.error('Watchlist toggle failed:', err)
+      getWatchlist()
+        .then(({ data }) => setWatchlistIds(new Set(data.map((w) => w.company_id))))
+        .catch(() => {})
+    }
   }, [])
 
   const filtered = useMemo(() => companies.filter((c) => {
@@ -335,8 +355,8 @@ export default function CompanyMap({ filters, onSelectCompany, highlightName }) 
             // markers of that type pop (fully opaque, larger radius, heavier
             // stroke) and every other marker fades out so the group is easy
             // to pick out of the cluttered map.
-            const isTypeHovered = hoveredType && c.company_type === hoveredType
-            const isTypeDimmed = hoveredType && !isTypeHovered
+            const isTypeHovered = activeType && c.company_type === activeType
+            const isTypeDimmed = activeType && !isTypeHovered
             const baseRadius = isHighlighted ? 12 : isHQ ? 8 : 6
             const radius = isTypeHovered ? baseRadius + 4 : baseRadius
             const baseFillOpacity = isHighlighted ? 1 : isHQ ? 0.9 : 0.7
@@ -398,7 +418,14 @@ export default function CompanyMap({ filters, onSelectCompany, highlightName }) 
         Heatmap
       </button>
 
-      {heatmapMode ? <HeatLegend /> : <Legend hoveredType={hoveredType} onHoverType={setHoveredType} />}
+      {heatmapMode ? <HeatLegend /> : (
+        <Legend
+          hoveredType={hoveredType}
+          pinnedType={pinnedType}
+          onHoverType={setHoveredType}
+          onPinType={(type) => setPinnedType((cur) => (cur === type ? null : type))}
+        />
+      )}
 
       <div className="absolute top-3 left-14 z-[1000] bg-white rounded shadow px-3 py-1.5 text-xs text-gray-600 border border-bmw-border">
         Showing <strong>{filtered.length}</strong> of <strong>{companies.length}</strong> locations

@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import { getCompanyDetail, refreshCompanyDetail, researchCompany, getJob, chatWithCompany, updateCompany } from '../api/client'
+import { faviconUrl } from '../utils/favicon'
 
 /* ── Logo helper ── */
 function nameColor(name) {
@@ -11,16 +12,17 @@ function nameColor(name) {
 
 function LogoImg({ website, name }) {
   const [failed, setFailed] = useState(false)
-  let domain = ''
-  try { domain = new URL(website).hostname.replace(/^www\./, '') } catch {}
+  const src = faviconUrl(website)
   const initials = (name || '').replace(/[^A-Za-z0-9]/g, '').slice(0, 2).toUpperCase() || '?'
   const bg = nameColor(name || '')
 
-  if (domain && !failed) {
+  if (src && !failed) {
     return (
       <img
-        src={`https://www.google.com/s2/favicons?sz=128&domain=${domain}`}
+        src={src}
         alt={name}
+        referrerPolicy="no-referrer"
+        loading="lazy"
         onError={() => setFailed(true)}
         className="w-12 h-12 rounded-xl bg-white object-contain p-1.5 shrink-0 shadow-sm border border-white/20"
       />
@@ -80,7 +82,7 @@ const CATEGORY_COLORS = {
 }
 
 /* ── Main Component ── */
-export default function CompanyDetailPage({ companyId, onClose, onOpenCompany, darkMode }) {
+export default function CompanyDetailPage({ companyId, onClose, onOpenCompany }) {
   const [company, setCompany] = useState(null)
   const [loading, setLoading] = useState(true)
   const [activeSection, setActiveSection] = useState('overview')
@@ -102,13 +104,22 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany, d
   const scrollRef = useRef(null)
   const sectionRefs = useRef({})
 
+  const sectionOffsetTop = (el) => {
+    // Position of `el` relative to the scroll container (robust regardless
+    // of where the offsetParent happens to be).
+    const container = scrollRef.current
+    if (!el || !container) return 0
+    return el.getBoundingClientRect().top
+      - container.getBoundingClientRect().top
+      + container.scrollTop
+  }
+
   const handleScroll = useCallback(() => {
     const container = scrollRef.current
     if (!container) return
     const scrollTop = container.scrollTop
     const ids = ['overview', 'facilities', 'partnerships', 'news', 'ai', 'similar', 'citations']
 
-    // If we're at (or very near) the bottom, force the last section active
     const atBottom = container.scrollHeight - scrollTop - container.clientHeight < 8
     if (atBottom) {
       setActiveSection(ids[ids.length - 1])
@@ -118,7 +129,7 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany, d
     let current = ids[0]
     for (const id of ids) {
       const el = sectionRefs.current[id]
-      if (el && el.offsetTop - 100 <= scrollTop) current = id
+      if (el && sectionOffsetTop(el) - 16 <= scrollTop) current = id
     }
     setActiveSection(current)
   }, [])
@@ -126,7 +137,7 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany, d
   const scrollToSection = useCallback((id) => {
     const el = sectionRefs.current[id]
     if (el && scrollRef.current) {
-      scrollRef.current.scrollTo({ top: el.offsetTop - 8, behavior: 'smooth' })
+      scrollRef.current.scrollTo({ top: sectionOffsetTop(el) - 8, behavior: 'smooth' })
     }
     setActiveSection(id)
   }, [])
@@ -138,6 +149,7 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany, d
 
   useEffect(() => {
     if (!companyId) return
+    let cancelled = false
     setLoading(true)
     setChatMessages([])
     setSelectedPartnership(null)
@@ -147,11 +159,13 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany, d
     setSaveMsg(null)
     getCompanyDetail(companyId)
       .then(({ data }) => {
+        if (cancelled) return
         setCompany(data)
         setNotesValue(data.notes || '')
       })
-      .catch(console.error)
-      .finally(() => setLoading(false))
+      .catch((e) => { if (!cancelled) console.error(e) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
   }, [companyId])
 
   async function handleReResearch() {
@@ -341,7 +355,7 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany, d
       </div>
 
       {/* ── Content ── */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto" onScroll={handleScroll}>
+      <div ref={scrollRef} className="flex-1 overflow-y-auto relative" onScroll={handleScroll}>
         <div className="max-w-6xl mx-auto px-6 py-6 space-y-12">
 
           {/* OVERVIEW */}

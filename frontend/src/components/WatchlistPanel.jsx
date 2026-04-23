@@ -20,15 +20,10 @@ const CATEGORY_COLORS = {
   other:       'bg-gray-100 text-bmw-gray-dark',
 }
 
+import { faviconUrl as getFaviconUrl } from '../utils/favicon'
+
 // Module-level cache so thumbnails persist across re-renders
 const thumbCache = {}
-
-function getFaviconUrl(url) {
-  try {
-    const domain = new URL(url).hostname.replace(/^www\./, '')
-    return `https://www.google.com/s2/favicons?sz=64&domain=${domain}`
-  } catch { return null }
-}
 
 function ImportanceDots({ score }) {
   return (
@@ -145,7 +140,7 @@ function ArticleRow({ article }) {
 }
 
 // ── Drag-to-reorder hook ──────────────────────────────────────────────────────
-function useDraggableList(items, setItems, keyFn) {
+function useDraggableList(items, setItems) {
   const dragIdx = useRef(null)
   const overIdx = useRef(null)
 
@@ -189,16 +184,17 @@ function nameColor(name) {
 
 function CompanyFavicon({ website, name, size = 10 }) {
   const [failed, setFailed] = useState(false)
-  let domain = ''
-  try { domain = new URL(website).hostname.replace(/^www\./, '') } catch {}
+  const src = getFaviconUrl(website)
   const initials = (name || '').replace(/[^A-Za-z0-9]/g, '').slice(0, 2).toUpperCase() || '?'
   const sizeClass = `w-${size} h-${size}`
-  if (domain && !failed) {
+  if (src && !failed) {
     return (
       <img
-        src={`https://www.google.com/s2/favicons?sz=128&domain=${domain}`}
+        src={src}
         alt=""
         className={`${sizeClass} rounded-lg object-contain bg-white p-0.5 border border-gray-100 flex-shrink-0`}
+        referrerPolicy="no-referrer"
+        loading="lazy"
         onError={() => setFailed(true)}
       />
     )
@@ -230,7 +226,12 @@ export default function WatchlistPanel({ onOpenCompany }) {
   const [runningAll, setRunningAll] = useState(false)
   const [refreshingId, setRefreshingId] = useState(null)
   const [lastRefreshed, setLastRefreshed] = useState(null)
-  const [pollTimer, setPollTimer] = useState(null)
+  // Poll state: `pollActive` drives the "Fetching news…" label; the refs hold
+  // the interval + timeout handles so we can tear them down on unmount or on
+  // a re-trigger (without the refs the previous poll keeps firing for 60s).
+  const [pollActive, setPollActive] = useState(false)
+  const pollIntervalRef = useRef(null)
+  const pollTimeoutRef = useRef(null)
   const [selectedId, setSelectedId] = useState(null)
   const [orderedIds, setOrderedIds] = useState([])   // user-dragged order
   const [companyDetail, setCompanyDetail] = useState(null)
@@ -283,12 +284,16 @@ export default function WatchlistPanel({ onOpenCompany }) {
   // Fetch full company detail when selection changes
   useEffect(() => {
     if (!selectedId) { setCompanyDetail(null); return }
+    // Guard against stale responses if the user clicks through companies
+    // quickly: only the latest selection's response is allowed to land.
+    let cancelled = false
     setDetailLoading(true)
     setCompanyDetail(null)
     getCompanyDetail(selectedId)
-      .then(({ data }) => setCompanyDetail(data))
-      .catch(() => setCompanyDetail(null))
-      .finally(() => setDetailLoading(false))
+      .then(({ data }) => { if (!cancelled) setCompanyDetail(data) })
+      .catch(() => { if (!cancelled) setCompanyDetail(null) })
+      .finally(() => { if (!cancelled) setDetailLoading(false) })
+    return () => { cancelled = true }
   }, [selectedId])
 
   // Persist order to localStorage
@@ -304,11 +309,20 @@ export default function WatchlistPanel({ onOpenCompany }) {
     } catch {}
   }, [])
 
+  const stopPolling = useCallback(() => {
+    if (pollIntervalRef.current) { clearInterval(pollIntervalRef.current); pollIntervalRef.current = null }
+    if (pollTimeoutRef.current)  { clearTimeout(pollTimeoutRef.current);   pollTimeoutRef.current = null }
+    setPollActive(false)
+  }, [])
+
   function startPolling() {
-    const t = setInterval(() => loadData(), 4000)
-    setPollTimer(t)
-    setTimeout(() => { clearInterval(t); setPollTimer(null) }, 60000)
+    stopPolling()
+    pollIntervalRef.current = setInterval(() => loadData(), 4000)
+    pollTimeoutRef.current  = setTimeout(stopPolling, 60000)
+    setPollActive(true)
   }
+
+  useEffect(() => stopPolling, [stopPolling])
 
   async function handleRunAll() {
     setRunningAll(true)
@@ -344,7 +358,7 @@ export default function WatchlistPanel({ onOpenCompany }) {
 
   const { itemProps } = useDraggableList(orderedWatchlist, (next) => {
     setOrderedIds(next.map((w) => w.company_id))
-  }, (w) => w.company_id)
+  })
 
   const selectedDigest = selectedId ? digestMap[selectedId] : null
   const selectedCompany = watchlist.find((w) => w.company_id === selectedId)
@@ -373,7 +387,7 @@ export default function WatchlistPanel({ onOpenCompany }) {
         </div>
         <div className="flex items-center gap-3">
           {lastRefreshed && <span className="text-xs text-gray-400">Updated {lastRefreshed}</span>}
-          {pollTimer && <span className="text-xs text-bmw-blue animate-pulse">Fetching news…</span>}
+          {pollActive && <span className="text-xs text-bmw-blue animate-pulse">Fetching news…</span>}
           <button
             onClick={handleRunAll}
             disabled={runningAll || watchlist.length === 0}

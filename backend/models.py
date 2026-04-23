@@ -158,6 +158,7 @@ class PartnershipMember(Base):
     role = Column(Text)                   # supplier, buyer, investor, investee, partner
 
     partnership = relationship("Partnership", back_populates="members")
+    company = relationship("Company", foreign_keys=[company_id])
 
 
 Index("ix_pm_partnership", PartnershipMember.partnership_id)

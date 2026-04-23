@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -11,6 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session, load_only, selectinload
 
+from backend._util import safe_json as _safe_json
 from backend.database import get_db, SessionLocal
 from backend.rate_limit import check_rate_limit
 from backend.models import (
@@ -23,6 +25,68 @@ from backend.models import (
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["partnerships"])
+
+# Generic bucket labels that occasionally appear as partner_name in legacy
+# announced_partners JSON or as synthetic seed rows. They're categories, not
+# companies, so they must NEVER render as network nodes. See also the
+# "Independent Investors" sentinel in routes/upload.py.
+BUCKET_PARTNER_NAMES = frozenset({
+    "independent investors",
+    "undisclosed investors",
+    "undisclosed investor",
+    "other investors",
+    "various investors",
+    "individual investors",
+    "angel investors",
+})
+
+
+# ── Name normalization ──────────────────────────────────────────────────────
+# Legal entity suffixes + generic qualifiers that should be stripped when
+# comparing company names. The goal is to collapse "Ford Motor Company",
+# "Ford Motor Co.", and "Ford Motors, Inc." down to the same bucket so the
+# partnership network doesn't render them as three separate investor nodes.
+_LEGAL_SUFFIX_TOKENS = frozenset({
+    "inc", "incorporated", "corp", "corporation",
+    "co", "company", "companies", "cos",
+    "llc", "lp", "llp", "ltd", "limited",
+    "plc", "gmbh", "ag", "sa", "nv", "bv", "oy", "ab", "as", "spa",
+    "holdings", "holding", "group", "grp",
+})
+
+_LEADING_ARTICLES = frozenset({"the", "a", "an"})
+
+_PUNCT_RE = re.compile(r"[^\w\s&]+")
+_WS_RE = re.compile(r"\s+")
+
+
+def _norm_company_name(name: str | None) -> str:
+    """Return a canonical form of ``name`` for equality comparison.
+
+    Strips punctuation, lowercases, removes legal-suffix tokens and leading
+    articles, and normalizes whitespace. Two raw names with identical
+    normalized output are treated as the same company.
+    """
+    if not name:
+        return ""
+    s = _PUNCT_RE.sub(" ", name.lower())
+    tokens = [t for t in _WS_RE.split(s) if t]
+    while tokens and tokens[0] in _LEADING_ARTICLES:
+        tokens.pop(0)
+    while tokens and tokens[-1] in _LEGAL_SUFFIX_TOKENS:
+        tokens.pop()
+    if not tokens:
+        # The name was *entirely* a suffix/article (e.g. "The Company"); fall
+        # back to the original so we don't collapse it into every other empty
+        # normalized name.
+        return name.strip().lower()
+    # Collapse trailing pluralization on the last token so "ford motors" and
+    # "ford motor" coalesce. Only applies when the singular form is >= 3
+    # chars to avoid mangling short tokens ("sas" → "sa").
+    last = tokens[-1]
+    if last.endswith("s") and len(last) > 3 and not last.endswith("ss"):
+        tokens[-1] = last[:-1]
+    return " ".join(tokens)
 
 
 def _log_task_error(task: asyncio.Task) -> None:
@@ -195,6 +259,7 @@ async def _enrich_network_bg(job_id: int, ts: str):
         # ── 2. Classify partnerships with null or 'other' type ──────────
         untyped_ps = (
             db.query(Partnership)
+            .options(selectinload(Partnership.members).selectinload(PartnershipMember.company))
             .filter((Partnership.partnership_type == None) | (Partnership.partnership_type == 'other'))  # noqa: E711
             .all()
         )
@@ -354,7 +419,25 @@ def _build_partnership_graph(db: Session) -> dict:
     )
 
     company_map: dict[int, Company] = {c.id: c for c in companies}
-    company_name_map: dict[str, int] = {c.company_name.lower(): c.id for c in companies}
+
+    # Smart name lookup — keyed on the normalized form so "Ford Motor Company"
+    # and "Ford Motor Co." collapse onto the same id. The first id we see for
+    # a given normalized name becomes the canonical id; any subsequent DB row
+    # with the same normalized name aliases back to it via ``id_alias``.
+    company_name_map: dict[str, int] = {}
+    id_alias: dict[int, int] = {}   # duplicate DB row id → canonical id
+    for c in companies:
+        key = _norm_company_name(c.company_name)
+        if not key:
+            continue
+        existing = company_name_map.get(key)
+        if existing is None:
+            company_name_map[key] = c.id
+        elif existing != c.id:
+            id_alias[c.id] = existing
+
+    def _canon(cid: int) -> int:
+        return id_alias.get(cid, cid)
 
     # We also need a name→id map for ALL companies (so legacy JSON partners
     # that happen to exist in DB but aren't yet "relevant" resolve to real IDs
@@ -365,7 +448,9 @@ def _build_partnership_graph(db: Session) -> dict:
         .all()
     )
     for cid, cname in full_name_map_rows:
-        company_name_map.setdefault(cname.lower(), cid)
+        key = _norm_company_name(cname)
+        if key:
+            company_name_map.setdefault(key, cid)
 
     # Gather metrics for percentile estimation — relevant companies only.
     metrics_by_company: dict[int, dict] = {}
@@ -391,9 +476,18 @@ def _build_partnership_graph(db: Session) -> dict:
     # Compute percentiles for approximation
     metric_ranks = _compute_percentiles(metrics_by_company)
 
-    # Build nodes
+    # Strip bucket-label companies from the graph entirely (defensive — the
+    # prune in backend/prune_investors.py should have deleted them already).
+    bucket_ids = {c.id for c in companies if (c.company_name or "").lower() in BUCKET_PARTNER_NAMES}
+
     nodes = []
     for c in companies:
+        if c.id in bucket_ids:
+            continue
+        if c.id in id_alias:
+            # Duplicate DB row that normalizes onto another company — skip so
+            # we emit exactly one node per canonical entity.
+            continue
         m = metrics_by_company.get(c.id, {})
         nodes.append({
             "id": c.id,
@@ -417,7 +511,16 @@ def _build_partnership_graph(db: Session) -> dict:
     links = []
     seen_links: set[tuple] = set()
     for p in partnerships:
-        member_ids = [(m.company_id, m.role) for m in p.members]
+        # Resolve each member to its canonical id and drop buckets + self-loops
+        # created by duplicate DB rows collapsing onto the same canonical.
+        raw_members = [(_canon(m.company_id), m.role) for m in p.members if m.company_id not in bucket_ids]
+        seen_member_ids = set()
+        member_ids: list[tuple[int, str]] = []
+        for cid, role in raw_members:
+            if cid in seen_member_ids:
+                continue
+            seen_member_ids.add(cid)
+            member_ids.append((cid, role))
         if len(member_ids) < 2:
             continue
         for i, (cid1, role1) in enumerate(member_ids):
@@ -449,21 +552,33 @@ def _build_partnership_graph(db: Session) -> dict:
 
     # Also include legacy announced_partners links
     virtual_id = -1
-    virtual_nodes: dict[str, int] = {}
+    virtual_nodes: dict[str, int] = {}   # keyed by normalized name
     for c in companies:
-        partners = json.loads(c.announced_partners or "[]")
+        if c.id in id_alias:
+            # Aliased company's JSON partners will be covered by the canonical
+            # row; processing them here would create duplicate links.
+            continue
+        partners = _safe_json(c.announced_partners, [])
         for p in partners:
             partner_name = (p.get("partner_name") or "").strip()
             if not partner_name:
                 continue
-            pid = company_name_map.get(partner_name.lower())
+            if partner_name.lower() in BUCKET_PARTNER_NAMES:
+                continue
+            norm = _norm_company_name(partner_name)
+            if not norm:
+                continue
+            # Prefer a real DB company (normalized match) over a virtual node
+            # so "Ford Motor Company" in the DB absorbs "Ford Motors" from
+            # someone else's announced_partners JSON.
+            pid = company_name_map.get(norm)
             if pid is None:
-                if partner_name.lower() in virtual_nodes:
-                    pid = virtual_nodes[partner_name.lower()]
+                if norm in virtual_nodes:
+                    pid = virtual_nodes[norm]
                 else:
                     pid = virtual_id
                     virtual_id -= 1
-                    virtual_nodes[partner_name.lower()] = pid
+                    virtual_nodes[norm] = pid
                     nodes.append({
                         "id": pid,
                         "name": partner_name,
@@ -483,12 +598,15 @@ def _build_partnership_graph(db: Session) -> dict:
                     })
 
             ptype = _map_legacy_type(p.get("type_of_partnership", "Other"))
-            link_key = (min(c.id, pid), max(c.id, pid), ptype)
+            src_cid = _canon(c.id)
+            if src_cid == pid:
+                continue  # self-loop after canonicalization
+            link_key = (min(src_cid, pid), max(src_cid, pid), ptype)
             if link_key not in seen_links:
                 seen_links.add(link_key)
                 links.append({
                     "partnership_id": None,
-                    "source": c.id,
+                    "source": src_cid,
                     "target": pid,
                     "type": ptype,
                     "direction": "bidirectional",
