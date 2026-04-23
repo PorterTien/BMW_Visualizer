@@ -200,14 +200,18 @@ export default function CompanyTable({ filters, onOpenCompany }) {
 
   useEffect(() => {
     setLoading(true)
-    Promise.all([getCompanies({ limit: 2000 }), getWatchlist()])
-      .then(([{ data: res }, { data: wl }]) => {
-        // API returns { items, total, ... } paginated shape
+    // Load companies and watchlist independently — a 401 on watchlist
+    // (unauthenticated user) must not prevent companies from showing.
+    getCompanies({ limit: 2000 })
+      .then(({ data: res }) => {
         setCompanies(Array.isArray(res) ? res : res.items ?? [])
-        setWatchedIds(new Set(wl.map((e) => e.company_id)))
       })
       .catch(console.error)
       .finally(() => setLoading(false))
+
+    getWatchlist()
+      .then(({ data: wl }) => setWatchedIds(new Set(wl.map((e) => e.company_id))))
+      .catch(() => {}) // silently ignore — user may not be logged in
   }, [])
 
   const handleWatchToggle = useCallback(async (e, companyId) => {
@@ -342,7 +346,30 @@ export default function CompanyTable({ filters, onOpenCompany }) {
       {/* Table */}
       <div className="flex-1 overflow-x-auto overflow-y-auto">
         {loading ? (
-          <div className="flex items-center justify-center h-full text-gray-500 text-sm">Loading…</div>
+          <div className="w-full">
+            {/* Skeleton rows */}
+            {Array.from({ length: 12 }).map((_, i) => (
+              <div key={i} className="flex gap-4 px-4 py-2.5 border-b border-[#EEF1F4] animate-pulse">
+                <div className="h-3 bg-gray-200 rounded w-8 shrink-0" />
+                <div className="h-3 bg-gray-200 rounded flex-1" style={{ maxWidth: '200px' }} />
+                <div className="h-3 bg-gray-200 rounded w-28" />
+                <div className="h-3 bg-gray-200 rounded w-20" />
+                <div className="h-3 bg-gray-200 rounded w-16" />
+                <div className="h-3 bg-gray-200 rounded w-24" />
+                <div className="h-3 bg-gray-200 rounded w-16" />
+              </div>
+            ))}
+          </div>
+        ) : companies.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full gap-3 text-center px-6">
+            <svg className="w-10 h-10 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
+            </svg>
+            <div>
+              <p className="text-sm font-semibold text-gray-600 mb-1">No company data yet</p>
+              <p className="text-xs text-gray-400 max-w-sm">The database is being seeded. This can take 5–10 minutes on first load. Try refreshing in a moment.</p>
+            </div>
+          </div>
         ) : (
           <table className="w-full text-xs border-collapse">
             <thead className="bg-[#F7F9FB] sticky top-0 z-10">
@@ -494,6 +521,7 @@ export default function CompanyTable({ filters, onOpenCompany }) {
           </table>
         )}
       </div>
+
 
       {/* Pagination — VF-style */}
       <div className="flex items-center gap-3 px-4 py-2 border-t border-[#DDE4EA] bg-[#FAFBFC] text-xs text-gray-600">
