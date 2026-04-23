@@ -7,7 +7,7 @@ import PartnershipNetwork from './components/PartnershipNetwork'
 import ResearchPanel from './components/ResearchPanel'
 import WatchlistPanel from './components/WatchlistPanel'
 import CompanyDetailPage from './components/CompanyDetailPage'
-import { getSeedStatus, triggerSeed, getWatchlistDigest, getCompanies, getCompaniesMap, getCompaniesNetwork } from './api/client'
+import { getSeedStatus, triggerSeed, getWatchlistDigest, getCompanies, getCompaniesMap, getCompaniesNetwork, getPartnershipGraph } from './api/client'
 import { supabase } from './lib/supabase'
 import { setAuthToken } from './api/client'
 
@@ -45,6 +45,7 @@ export default function App() {
     getCompanies({ limit: 2000 })
     getCompaniesMap()
     getCompaniesNetwork()
+    getPartnershipGraph()
   }, [])
 
   // Resizable company detail panel

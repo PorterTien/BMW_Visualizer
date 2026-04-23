@@ -205,19 +205,13 @@ function PartnershipNetwork({ onSelectCompany }) {
     import('react-force-graph-2d').then((m) => setFG(() => m.default))
   }, [])
 
-  // Fetch data then auto-classify if any unknowns exist
+  // Fetch data only. AI classification used to auto-kick here on every mount —
+  // that fired hundreds of Claude calls in the background and re-fetched the
+  // graph when done, making the tab feel unresponsive for minutes. Users can
+  // trigger it explicitly via the Classify button.
   useEffect(() => {
     getPartnershipGraph()
-      .then(({ data }) => {
-        setGraphData(data)
-        const hasUnknowns =
-          data.nodes.some(n => !n.type || n.type === 'other') ||
-          data.links.some(l => !l.type || l.type === 'other')
-        if (hasUnknowns) {
-          // Delay slightly so the graph renders first
-          setTimeout(() => handleClassify(), 1200)
-        }
-      })
+      .then(({ data }) => setGraphData(data))
       .catch((err) => {
         console.error('Failed to load partnership graph, falling back to legacy:', err)
         getCompaniesNetwork()
@@ -225,7 +219,7 @@ function PartnershipNetwork({ onSelectCompany }) {
           .catch(console.error)
       })
       .finally(() => setLoading(false))
-  }, [handleClassify])
+  }, [])
 
   // Resize observer — must re-run when FG/loading change so containerRef is populated
   useEffect(() => {
@@ -238,18 +232,54 @@ function PartnershipNetwork({ onSelectCompany }) {
     return () => obs.disconnect()
   }, [FG, loading])
 
-  // Configure forces — only runs when FG or graphData changes, not on resize
+  // Configure forces — only runs when FG or graphData changes, not on resize.
+  // Tuned to prevent hub-clumping: hubs (e.g. Tesla with 50+ partnerships) used
+  // to crush every neighbour into one knot because link.strength was a flat 0.2.
+  // We use d3's default adaptive link strength (1 / min(deg(s), deg(t))) so each
+  // extra edge on a hub pulls its neighbours proportionally less, and we pair
+  // that with size-aware charge + a generous collide buffer so nodes can never
+  // visually overlap.
   useEffect(() => {
     const fg = fgRef.current
     if (!fg) return
     const t = setTimeout(() => {
-      fg.d3Force('charge')?.strength(-400)
-      fg.d3Force('center')?.strength(0.02)
-      fg.d3Force('link')?.distance(180).strength(0.2)
+      const nodeCount = displayGraphRef.current.nodes.length || 1
+      const chargeStrength = -600 - Math.sqrt(nodeCount) * 80
+
+      fg.d3Force('charge')
+        ?.strength(chargeStrength)
+        .distanceMin(10)
+        .distanceMax(1400)
+
+      fg.d3Force('center')?.strength(0.01)
+
+      fg.d3Force('link')
+        ?.distance(220)
+        .strength((link) => {
+          const counts = linkCountsRef.current
+          const s = typeof link.source === 'object' ? link.source.id : link.source
+          const t2 = typeof link.target === 'object' ? link.target.id : link.target
+          const deg = Math.min(counts[s] || 1, counts[t2] || 1)
+          return 1 / Math.max(1, deg)
+        })
+
       fg.d3Force('y', null) // remove any leftover Y force
-      fg.d3Force('collide', forceCollide(n => {
-        return nodeRadius(n, scaleMetricRef.current, maxValuesRef.current, linkCountsRef.current) + 6
-      }).strength(1).iterations(8))
+
+      fg.d3Force(
+        'collide',
+        forceCollide((n) => {
+          return nodeRadius(n, scaleMetricRef.current, maxValuesRef.current, linkCountsRef.current) + 22
+        })
+          .strength(1)
+          .iterations(4),
+      )
+
+      // Unpin everything and re-heat so the new forces actually take effect
+      displayGraphRef.current.nodes.forEach((n) => {
+        n.fx = undefined
+        n.fy = undefined
+      })
+      fg.d3ReheatSimulation?.()
     }, 100)
     return () => clearTimeout(t)
   }, [FG, graphData])
@@ -553,10 +583,13 @@ function PartnershipNetwork({ onSelectCompany }) {
     return { nodes, links }
   }, [filteredGraph])  // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Re-fit on filter change — unpin nodes so they can re-layout
+  // Re-fit on filter change — unpin nodes so they can re-layout, and reheat the
+  // simulation so the collide + charge forces actually push them apart again
+  // (without reheat they stay pinned-in-place at their previous positions).
   useEffect(() => {
     fitDoneRef.current = false
     displayGraphRef.current.nodes.forEach(n => { n.fx = undefined; n.fy = undefined })
+    fgRef.current?.d3ReheatSimulation?.()
     const t = setTimeout(() => fgRef.current?.zoomToFit(400, 60), 800)
     return () => clearTimeout(t)
   }, [filteredGraph])

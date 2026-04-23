@@ -51,8 +51,13 @@ export const updateCompany = (id, updates, mark_as_manual = true) =>
 export const getPartnerships = (params) => api.get('/partnerships', { params })
 export const getPartnership = (id) => api.get(`/partnerships/${id}`)
 export const createPartnership = (data) => api.post('/partnerships', data)
-export const getPartnershipGraph = () => api.get('/partnerships/graph')
-export const enrichPartnershipNetwork = () => api.post('/partnerships/enrich')
+export const getPartnershipGraph = () => cached('partnerships:graph', () => api.get('/partnerships/graph'))
+export const enrichPartnershipNetwork = () => {
+  // A successful enrichment mutates node/link types; invalidate the cache so
+  // the next Network-tab open fetches fresh classifications.
+  bustCache('partnerships:graph')
+  return api.post('/partnerships/enrich')
+}
 
 // Facilities & Metrics
 export const getCompanyFacilities = (id) => api.get(`/companies/${id}/facilities`)

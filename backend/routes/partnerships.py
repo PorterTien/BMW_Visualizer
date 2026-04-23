@@ -8,7 +8,8 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy import func, or_
+from sqlalchemy.orm import Session, load_only, selectinload
 
 from backend.database import get_db, SessionLocal
 from backend.rate_limit import check_rate_limit
@@ -125,7 +126,11 @@ def list_partnerships(
         q = q.filter(Partnership.date_announced <= date_to)
     if company_id:
         q = q.join(PartnershipMember).filter(PartnershipMember.company_id == company_id)
-    partnerships = q.order_by(Partnership.date_announced.desc()).all()
+    partnerships = (
+        q.options(selectinload(Partnership.members))
+        .order_by(Partnership.date_announced.desc())
+        .all()
+    )
     all_member_ids = {m.company_id for p in partnerships for m in p.members}
     company_map = {c.id: c for c in db.query(Company).filter(Company.id.in_(all_member_ids)).all()} if all_member_ids else {}
     return [_partnership_dict(p, db, company_map) for p in partnerships]
@@ -296,18 +301,73 @@ PARTNERSHIP_TYPE_DIRECTIONS = {
 }
 
 
+_GRAPH_COMPANY_COLS = (
+    Company.id,
+    Company.company_name,
+    Company.company_type,
+    Company.industry_segment,
+    Company.supply_chain_segment,
+    Company.market_cap_usd,
+    Company.revenue_usd,
+    Company.number_of_employees,
+    Company.total_funding_usd,
+    Company.gwh_capacity,
+    Company.announced_partners,
+)
+
+
 def _build_partnership_graph(db: Session) -> dict:
     """Return nodes + links for the enhanced bubble graph, using both
-    the new partnerships table AND legacy announced_partners JSON."""
+    the new partnerships table AND legacy announced_partners JSON.
 
-    companies = db.query(Company).all()
-    partnerships = db.query(Partnership).all()
+    Only companies that actually participate in the graph (i.e. are a
+    PartnershipMember, appear in another company's announced_partners JSON,
+    or have a non-empty announced_partners of their own) are loaded. Heavy
+    TEXT columns (summary, long_description, notes, keywords, …) never leave
+    the DB. Partnership.members is eager-loaded to avoid the N+1 lazy-load."""
 
-    # Build company lookup
+    # Eager-load members so we don't fire 1 SELECT per partnership.
+    partnerships = (
+        db.query(Partnership)
+        .options(selectinload(Partnership.members))
+        .all()
+    )
+
+    # IDs that matter: anyone who is a partnership member, or has legacy JSON.
+    member_ids: set[int] = {m.company_id for p in partnerships for m in p.members}
+    legacy_ids_q = db.query(Company.id).filter(
+        Company.announced_partners.isnot(None),
+        func.trim(Company.announced_partners) != "",
+        func.trim(Company.announced_partners) != "[]",
+    )
+    legacy_ids: set[int] = {row[0] for row in legacy_ids_q.all()}
+    relevant_ids = member_ids | legacy_ids
+
+    if not relevant_ids:
+        return {"nodes": [], "links": []}
+
+    companies = (
+        db.query(Company)
+        .options(load_only(*_GRAPH_COMPANY_COLS))
+        .filter(Company.id.in_(relevant_ids))
+        .all()
+    )
+
     company_map: dict[int, Company] = {c.id: c for c in companies}
     company_name_map: dict[str, int] = {c.company_name.lower(): c.id for c in companies}
 
-    # Gather all metrics for percentile estimation
+    # We also need a name→id map for ALL companies (so legacy JSON partners
+    # that happen to exist in DB but aren't yet "relevant" resolve to real IDs
+    # instead of getting a virtual node). One lightweight SELECT of two cols.
+    full_name_map_rows = (
+        db.query(Company.id, Company.company_name)
+        .filter(Company.id.notin_(relevant_ids))
+        .all()
+    )
+    for cid, cname in full_name_map_rows:
+        company_name_map.setdefault(cname.lower(), cid)
+
+    # Gather metrics for percentile estimation — relevant companies only.
     metrics_by_company: dict[int, dict] = {}
     for c in companies:
         metrics_by_company[c.id] = {
@@ -318,8 +378,12 @@ def _build_partnership_graph(db: Session) -> dict:
             "manufacturing_capacity_gwh": _parse_max_gwh(c.gwh_capacity),
         }
 
-    # Also pull from company_metrics table
-    all_metrics = db.query(CompanyMetric).all()
+    # Pull company_metrics only for relevant companies.
+    all_metrics = (
+        db.query(CompanyMetric)
+        .filter(CompanyMetric.company_id.in_(relevant_ids))
+        .all()
+    )
     for m in all_metrics:
         if m.company_id in metrics_by_company:
             metrics_by_company[m.company_id][m.metric_name] = m.metric_value

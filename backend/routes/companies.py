@@ -270,6 +270,7 @@ def list_companies(
     q = (
         db.query(Company, pc.label("partner_count"))
         .options(load_only(*_COMPANY_LIST_LOAD_ONLY))
+        .filter(Company.data_source != 'pitchbook_investor')
     )
     if search:
         q = q.filter(Company.company_name.ilike(f"%{search}%"))
@@ -298,6 +299,7 @@ def companies_map(db: Session = Depends(get_db)):
     companies = (
         db.query(Company)
         .options(load_only(*_COMPANY_MAP_LOAD_ONLY))
+        .filter(Company.data_source != 'pitchbook_investor')
         .all()
     )
     results = []
@@ -371,6 +373,7 @@ def companies_network(db: Session = Depends(get_db)):
     companies = (
         db.query(Company)
         .options(load_only(*_COMPANY_NETWORK_LOAD_ONLY))
+        .filter(Company.data_source != 'pitchbook_investor')
         .all()
     )
     nodes = []
@@ -812,6 +815,16 @@ def enrich_sec_edgar(db: Session = Depends(get_db)):
     from backend.sec_edgar import run_enrichment
     result = run_enrichment(db)
     return result
+
+
+@router.post("/dedupe")
+def dedupe_all_companies(db: Session = Depends(get_db)):
+    """Scan the DB for duplicate companies (by normalized name), merge each
+    group into its richest row, re-point news/partnerships/watchlist/etc.,
+    then delete the losers. Runs automatically at the end of every upload;
+    call this endpoint to sweep the database on demand."""
+    from backend.dedupe import dedupe_companies
+    return dedupe_companies(db)
 
 
 class ResearchRequest(BaseModel):

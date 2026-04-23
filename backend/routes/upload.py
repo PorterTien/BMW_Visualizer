@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from backend.config import UPLOAD_DIR
 from backend.database import get_db
+from backend.dedupe import dedupe_companies
 from backend.models import Company, NewsHeadline, Partnership, PartnershipMember, ResearchJob
 
 log = logging.getLogger(__name__)
@@ -87,7 +88,13 @@ async def upload_csv(file: UploadFile = File(...), db: Session = Depends(get_db)
             db.add(Company(**data))
             added += 1
     db.commit()
-    return {"added": added, "updated": updated, "filename": file.filename}
+    dedupe_summary = dedupe_companies(db)
+    return {
+        "added": added,
+        "updated": updated,
+        "filename": file.filename,
+        "dedupe": dedupe_summary,
+    }
 
 
 @router.post("/document")
@@ -184,12 +191,15 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
 
             inner_db.commit()
 
+            dedupe_summary = dedupe_companies(inner_db)
+
             j = inner_db.query(ResearchJob).filter(ResearchJob.id == job_id).first()
             if j:
                 j.status = "complete"
                 j.result = json.dumps({
                     "companies_added": companies_added,
                     "news_added": news_added,
+                    "dedupe": dedupe_summary,
                 })
                 j.updated_at = datetime.now(timezone.utc).isoformat()
                 inner_db.commit()
@@ -605,9 +615,17 @@ def _import_pitchbook_deals(df: pd.DataFrame, db, ts: str) -> dict:
     # edges: list of (name_a, name_b, legacy_type, scale, date, deal_val)
     edges: list[tuple] = []
     individuals_grouped = 0
+    # Track which names appeared as the primary company (Companies column)
+    primary_company_names: set[str] = set()
 
-    def touch_company(name: str, data: dict):
+    def touch_company(name: str, data: dict, is_primary: bool = False):
         key = name.lower()
+        if is_primary:
+            primary_company_names.add(key)
+            # Upgrade investor-tagged companies that are also primary companies
+            if key in pending_companies:
+                pending_companies[key].pop('_investor_only', None)
+                pending_companies[key]['data_source'] = 'pitchbook'
         if key in company_cache:
             pending_updates.append((company_cache[key], data))
         else:
@@ -615,6 +633,9 @@ def _import_pitchbook_deals(df: pd.DataFrame, db, ts: str) -> dict:
             # Merge: only fill in fields not yet seen
             merged = {k: v for k, v in data.items() if v is not None}
             existing.update({k: v for k, v in merged.items() if k not in existing})
+            # Mark as investor-only if it has never appeared as a primary company
+            if not is_primary and key not in primary_company_names:
+                existing.setdefault('_investor_only', True)
             pending_companies[key] = existing
 
     for _, row in df.iterrows():
@@ -653,7 +674,7 @@ def _import_pitchbook_deals(df: pd.DataFrame, db, ts: str) -> dict:
             'last_fundraise_date': date,
             'data_source': 'pitchbook',
             'notes': pb_industry or None,
-        })
+        }, is_primary=True)
 
         investors_raw = _col(row, 'Investors', 'Lead/Sole Investors', 'Lead Investors',
                              'Investor(s)', 'All Investors')
@@ -679,7 +700,12 @@ def _import_pitchbook_deals(df: pd.DataFrame, db, ts: str) -> dict:
 
     # ── Flush 1: insert all new companies at once ──────────────────────────────
     for key, data in pending_companies.items():
+        investor_only = data.pop('_investor_only', False)
         safe = {k: v for k, v in data.items() if v is not None and k in valid_company_cols}
+        # Investor-only companies (appeared only in Investors column) get a distinct
+        # data_source so they can be filtered from company list/map/network views.
+        if investor_only and safe.get('data_source') != 'pitchbook':
+            safe['data_source'] = 'pitchbook_investor'
         co = Company(company_name=safe.pop('company_name', key), last_updated=ts, **safe)
         db.add(co)
         company_cache[key] = co
@@ -872,6 +898,8 @@ async def upload_partnerships(file: UploadFile = File(...), db: Session = Depend
     result = IMPORTERS[fmt](df, db, ts)
     db.commit()
 
+    dedupe_summary = dedupe_companies(db)
+
     # Kick off background AI enrichment for companies missing company_type
     enrich_job = ResearchJob(
         job_type="pitchbook_enrich",
@@ -898,6 +926,7 @@ async def upload_partnerships(file: UploadFile = File(...), db: Session = Depend
         "source": SOURCE_LABELS[fmt], "format": fmt,
         **result, "filename": file.filename,
         "enrich_job_id": enrich_job_id,
+        "dedupe": dedupe_summary,
     }
 
 
