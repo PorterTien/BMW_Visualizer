@@ -504,7 +504,7 @@ def _split_investors(raw: str) -> list[str]:
 def _detect_format(cols: set) -> str | None:
     # Reject if any column name is suspiciously long — that means we're reading
     # a metadata/search-criteria row, not a real header row.
-    if any(len(c) > 80 for c in cols):
+    if any(len(str(c)) > 80 for c in cols):
         return None
 
     lc = {c.lower() for c in cols}
@@ -576,7 +576,72 @@ def _extract_jv_partners(raw_name: str) -> list[str]:
 
 
 def _import_pitchbook_deals(df: pd.DataFrame, db, ts: str) -> dict:
-    companies_added = partnerships = 0
+    # ── Preload existing data into memory (2 queries total instead of N) ────────
+    company_cache: dict[str, Company] = {
+        c.company_name.lower(): c for c in db.query(Company).all()
+    }
+    # Existing partnerships as frozenset({id_a, id_b}) → set of types already stored
+    existing_pairs: dict[frozenset, set] = {}
+    for p in db.query(Partnership).all():
+        member_ids = frozenset(m.company_id for m in p.members)
+        existing_pairs.setdefault(member_ids, set()).add(p.partnership_type)
+
+    def get_or_create_company(name: str, data: dict) -> Company:
+        key = name.lower()
+        if key in company_cache:
+            co = company_cache[key]
+            valid = set(Company.__table__.columns.keys())
+            for k, v in data.items():
+                if v is not None and k in valid:
+                    setattr(co, k, v)
+            co.last_updated = ts
+            return co
+        valid = set(Company.__table__.columns.keys())
+        safe = {k: v for k, v in data.items() if v is not None and k in valid}
+        co = Company(company_name=name, last_updated=ts, **safe)
+        db.add(co)
+        company_cache[key] = co
+        return co
+
+    def make_partnership(co_a: Company, co_b: Company, legacy_type: str,
+                         scale: str | None, date: str | None, deal_val: float | None):
+        new_type = LEGACY_TO_NEW_TYPE.get(legacy_type, 'other')
+        # Flush so both companies have IDs assigned
+        if co_a.id is None or co_b.id is None:
+            db.flush()
+        pair = frozenset({co_a.id, co_b.id})
+        if new_type in existing_pairs.get(pair, set()):
+            return  # exact duplicate
+        existing_pairs.setdefault(pair, set()).add(new_type)
+        direction = DIRECTION_FOR_TYPE.get(new_type, 'bidirectional')
+        p = Partnership(
+            partnership_name=f"{co_a.company_name} — {co_b.company_name}",
+            partnership_type=new_type,
+            stage="active",
+            direction=direction,
+            date_announced=date,
+            deal_value=deal_val,
+            scope=scale,
+            source_name='pitchbook',
+            date_sourced=ts,
+            created_at=ts,
+            updated_at=ts,
+        )
+        db.add(p)
+        db.flush()
+        if direction == 'investor_to_investee':
+            db.add(PartnershipMember(partnership_id=p.id, company_id=co_b.id, role='investor'))
+            db.add(PartnershipMember(partnership_id=p.id, company_id=co_a.id, role='investee'))
+        elif direction == 'supplier_to_buyer':
+            db.add(PartnershipMember(partnership_id=p.id, company_id=co_b.id, role='supplier'))
+            db.add(PartnershipMember(partnership_id=p.id, company_id=co_a.id, role='buyer'))
+        else:
+            db.add(PartnershipMember(partnership_id=p.id, company_id=co_a.id, role='partner'))
+            db.add(PartnershipMember(partnership_id=p.id, company_id=co_b.id, role='partner'))
+
+    # ── Main import loop ────────────────────────────────────────────────────────
+    companies_added_before = len(company_cache)
+    partnerships = 0
     individuals_grouped = 0
 
     for _, row in df.iterrows():
@@ -585,82 +650,69 @@ def _import_pitchbook_deals(df: pd.DataFrame, db, ts: str) -> dict:
             continue
         name = _clean_company_name(raw_company_col)
 
-        ptype = _map_deal_type(_col(row, 'Deal Type', 'Deal Type 2', 'Round'))
+        deal_type_raw = _col(row, 'Deal Type', 'Deal Type 2', 'Round') or ''
+        ptype = _map_deal_type(deal_type_raw)
         date = _col(row, 'Deal Date', 'Close Date', 'Announced Date')
-        scale = _scale_label(_parse_money_millions(_col(row, 'Deal Size (USD)', 'Deal Size', 'Amount (USD)', 'Amount')))
+        deal_val = _parse_money_millions(_col(row, 'Deal Size (USD)', 'Deal Size', 'Amount (USD)', 'Amount'))
+        scale = _scale_label(deal_val)
 
-        # Parse HQ from the rich "All Columns" export
         hq_raw = _col(row, 'HQ Location', 'Headquarters Location')
         city, state, country = _parse_hq(hq_raw) if hq_raw else (None, None, None)
-        city = _col(row, 'Company City', 'HQ City', 'City') or city
-        state = _col(row, 'Company State/Province', 'HQ State', 'State') or state
+        city   = _col(row, 'Company City', 'HQ City', 'City') or city
+        state  = _col(row, 'Company State/Province', 'HQ State', 'State') or state
         country = _col(row, 'Company Country/Territory/Region', 'HQ Country', 'Country') or country
 
         website = _col(row, 'Company Website', 'Website', 'URL')
         if website:
             website = _clean_hyperlink(website)
 
-        # Collect PitchBook industry info for later AI classification
         pb_industry = ' / '.join(filter(None, [
             _col(row, 'Primary PitchBook Industry Sector'),
             _col(row, 'Primary PitchBook Industry Group'),
             _col(row, 'Primary PitchBook Industry Code'),
         ]))
 
-        existed = db.query(Company).filter(Company.company_name.ilike(name)).first() is not None
-        company = _upsert_company(db, name, {
-            'company_hq_city': city,
-            'company_hq_state': state,
+        company = get_or_create_company(name, {
+            'company_hq_city': city, 'company_hq_state': state,
             'company_hq_country': country,
             'summary': _col(row, 'Description', 'Business Description', 'Company Description'),
             'company_website': website,
             'number_of_employees': _parse_employees(_col(row, 'Current Employees', 'Employees', 'Number of Employees')),
             'data_source': 'pitchbook',
-            # Stash PitchBook industry for the AI enrichment pass
             'notes': pb_industry or None,
-        }, ts)
-        if not existed:
-            companies_added += 1
-
+        })
         if date and not company.last_fundraise_date:
             company.last_fundraise_date = date
 
         investors_raw = _col(row, 'Investors', 'Lead/Sole Investors', 'Lead Investors', 'Investor(s)', 'All Investors')
         if investors_raw:
             for raw_investor in _split_investors(investors_raw):
-                investor = _clean_company_name(raw_investor)
                 is_individual, person_name = _is_individual_investor(raw_investor)
-
+                investor_name = INDEPENDENT_INVESTORS_NAME if is_individual else _clean_company_name(raw_investor)
+                inv_scale = (f"{person_name}" + (f" — {scale}" if scale else "")) if is_individual else scale
                 if is_individual:
-                    # Group under a single "Independent Investors" entity
-                    investor_label = INDEPENDENT_INVESTORS_NAME
-                    scale_with_name = f"{person_name}" + (f" — {scale}" if scale else "")
-                    _add_partner(company, investor_label, ptype, scale_with_name, date)
-                    _create_partnership_record(
-                        db, company, investor_label, ptype, scale_with_name, date, 'pitchbook', ts,
-                    )
                     individuals_grouped += 1
-                else:
-                    _add_partner(company, investor, ptype, scale, date)
-                    _create_partnership_record(db, company, investor, ptype, scale, date, 'pitchbook', ts)
+                investor_co = get_or_create_company(investor_name, {'data_source': 'pitchbook'})
+                _add_partner(company, investor_name, ptype, inv_scale, date)
+                make_partnership(company, investor_co, ptype, inv_scale, date, deal_val)
                 partnerships += 1
 
-        # For JV deals: also extract partners from "Joint Venture (A / B)" company name
-        # and link them directly to each other (not just to the JV vehicle company).
-        deal_type_raw = _col(row, 'Deal Type', 'Deal Type 2', 'Round') or ''
+        # JV name pattern: "Joint Venture (A / B)" → direct A↔B link
         if 'joint venture' in deal_type_raw.lower():
             jv_partners = _extract_jv_partners(raw_company_col)
-            for i, partner_a in enumerate(jv_partners):
-                partner_a_clean = _clean_company_name(partner_a)
-                for partner_b in jv_partners[i + 1:]:
-                    partner_b_clean = _clean_company_name(partner_b)
-                    co_a = _upsert_company(db, partner_a_clean, {'data_source': 'pitchbook'}, ts)
-                    co_b = _upsert_company(db, partner_b_clean, {'data_source': 'pitchbook'}, ts)
-                    _add_partner(co_a, partner_b_clean, 'Joint Venture', scale, date)
-                    _add_partner(co_b, partner_a_clean, 'Joint Venture', scale, date)
-                    _create_partnership_record(db, co_a, partner_b_clean, 'Joint Venture', scale, date, 'pitchbook', ts)
+            for i, pa in enumerate(jv_partners):
+                co_a = get_or_create_company(_clean_company_name(pa), {'data_source': 'pitchbook'})
+                for pb in jv_partners[i + 1:]:
+                    co_b = get_or_create_company(_clean_company_name(pb), {'data_source': 'pitchbook'})
+                    _add_partner(co_a, co_b.company_name, 'Joint Venture', scale, date)
+                    _add_partner(co_b, co_a.company_name, 'Joint Venture', scale, date)
+                    make_partnership(co_a, co_b, 'Joint Venture', scale, date, deal_val)
                     partnerships += 1
 
+    companies_added = sum(1 for c in company_cache.values() if c.id is None or
+                          c.company_name.lower() not in {k for k in company_cache
+                                                          if company_cache[k].id is not None})
+    companies_added = len(company_cache) - companies_added_before
     log.info("PitchBook deals: %d individuals grouped under '%s'", individuals_grouped, INDEPENDENT_INVESTORS_NAME)
     return {
         'companies_added': companies_added, 'companies_updated': 0,
@@ -739,27 +791,30 @@ async def upload_partnerships(file: UploadFile = File(...), db: Session = Depend
     try:
         import pandas as pd
 
-        df = pd.read_csv(path, dtype=str) if file.filename.endswith(".csv") else pd.read_excel(path, dtype=str)
+        if file.filename.endswith(".csv"):
+            df = pd.read_csv(path, dtype=str)
+            df.columns = [str(c).strip() for c in df.columns]
+            fmt = _detect_format(set(df.columns))
+        else:
+            # Read once into memory as raw (no header), then find the real header
+            # row by scanning in-memory — avoids re-reading the file up to 15 times.
+            raw = pd.read_excel(path, header=None, dtype=str)
+            df, fmt = None, None
+            for hr in range(min(15, len(raw))):
+                candidate_cols = [str(v).strip() for v in raw.iloc[hr].values]
+                candidate_fmt = _detect_format(set(candidate_cols))
+                if candidate_fmt:
+                    df = raw.iloc[hr + 1:].copy()
+                    df.columns = candidate_cols
+                    df = df.reset_index(drop=True)
+                    fmt = candidate_fmt
+                    log.info("Detected header at row %d (format: %s)", hr, fmt)
+                    break
+            if df is None:
+                df = raw
+                df.columns = [str(c).strip() for c in df.columns]
     except Exception as e:
         raise HTTPException(400, f"Failed to parse file: {e}")
-
-    df.columns = [str(c).strip() for c in df.columns]
-    fmt = _detect_format(set(df.columns))
-
-    # PitchBook XLSX exports often have metadata rows before the real header.
-    # If format wasn't detected, scan rows 1-14 for the actual header row.
-    if not fmt and file.filename.endswith(".xlsx"):
-        for header_row in range(1, 15):
-            try:
-                df2 = pd.read_excel(path, header=header_row, dtype=str)
-                df2.columns = [str(c).strip() for c in df2.columns]
-                fmt2 = _detect_format(set(df2.columns))
-                if fmt2:
-                    df, fmt = df2, fmt2
-                    log.info("Detected header at row %d (format: %s)", header_row, fmt)
-                    break
-            except Exception:
-                continue
 
     if not fmt:
         raise HTTPException(
