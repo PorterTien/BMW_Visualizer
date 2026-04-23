@@ -367,6 +367,8 @@ function PartnershipNetwork({ onSelectCompany }) {
 
   useEffect(() => { fgRef.current?.refresh() }, [dark])
 
+  const [clickedNodeData, setClickedNodeData] = useState(null)
+
   // Recompute the dim-set from an arbitrary collection of selected ids.
   const recomputeConnected = useCallback((ids) => {
     if (!ids.size) {
@@ -395,6 +397,7 @@ function PartnershipNetwork({ onSelectCompany }) {
         selectedIdsRef.current = new Set()
         clickedConnectedRef.current = null
         setClickedLink(null)
+        setClickedNodeData(null)
       } else {
         // Append to the multi-select trail. Clicking the same node again is
         // a no-op on the set but refocuses it so the panel updates.
@@ -407,6 +410,7 @@ function PartnershipNetwork({ onSelectCompany }) {
         recomputeConnected(next)
         setClickedLink(null)
         setInvestorPanelOpen(false)
+        setClickedNodeData(node)
         setHovVersion((v) => v + 1)
       }
     }, 0)
@@ -433,6 +437,7 @@ function PartnershipNetwork({ onSelectCompany }) {
     clickedNodeRef.current = null
     setFocusedNodeId(null)
     clickedConnectedRef.current = null
+    setClickedNodeData(null)
     setHovVersion((v) => v + 1)
   }, [])
 
@@ -1370,6 +1375,16 @@ function PartnershipNetwork({ onSelectCompany }) {
           {/* Tooltip — isolated component so hover never re-renders the parent/FG */}
           <HoverTooltip listenRef={tooltipSetterRef} dark={dark} />
 
+          {/* Node click panel — shows company info + View button */}
+          {clickedNodeData && !clickedLink && (
+            <NodeClickPanel
+              node={clickedNodeData}
+              dark={dark}
+              onClose={() => { setClickedNodeData(null); setClickedNodeId(null); clickedNodeRef.current = null }}
+              onOpenCompany={(id) => { setClickedNodeData(null); onSelectCompany?.(id) }}
+            />
+          )}
+
           {/* Link click panel — shows partnership details */}
           {clickedLink && (
             <LinkDetailPanel
@@ -1703,6 +1718,82 @@ function LinkDetailPanel({ link, dark, onClose, onOpenCompany }) {
 }
 
 /**
+ * NodeClickPanel — shown when user clicks a node. Lets them choose to open the full profile.
+ */
+function NodeClickPanel({ node, dark, onClose, onOpenCompany }) {
+  const panelBg = dark ? 'bg-[#1E293B] border-gray-600' : 'bg-white border-bmw-border'
+  const headBg  = dark ? 'bg-[#263345] border-gray-700' : 'bg-[#F7F9FB] border-gray-200'
+  const textPri = dark ? 'text-gray-100' : 'text-gray-800'
+  const textMut = dark ? 'text-gray-400' : 'text-gray-500'
+  const { border } = typeColors(node.type, dark, node.name || '')
+
+  return (
+    <div className={`absolute top-4 right-4 z-20 rounded-xl shadow-xl border w-72 overflow-hidden ${panelBg}`}>
+      {/* Header */}
+      <div className={`px-4 py-3 border-b flex items-center justify-between ${headBg}`}>
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: border }} />
+          <span className={`font-bold text-sm truncate ${textPri}`}>{node.name}</span>
+        </div>
+        <button onClick={onClose} className={`text-lg leading-none ml-2 shrink-0 ${textMut} hover:text-red-400`}>✕</button>
+      </div>
+
+      {/* Stats */}
+      <div className="px-4 py-3 space-y-1.5">
+        {node.type && node.type !== 'other' && (
+          <div className="flex justify-between text-xs">
+            <span className={textMut}>Type</span>
+            <span className={`font-medium ${textPri}`}>{node.type}</span>
+          </div>
+        )}
+        {node.in_db === false && (
+          <div className="text-xs text-amber-500 font-medium">External partner — not in database</div>
+        )}
+        {node.employee_count != null && (
+          <div className="flex justify-between text-xs">
+            <span className={textMut}>Employees</span>
+            <span className={`font-medium ${textPri}`}>{node.employee_count.toLocaleString()}</span>
+          </div>
+        )}
+        {node.revenue_usd != null && (
+          <div className="flex justify-between text-xs">
+            <span className={textMut}>Revenue</span>
+            <span className={`font-medium ${textPri}`}>{fmtVal(node.revenue_usd)}</span>
+          </div>
+        )}
+        {node.market_cap_usd != null && (
+          <div className="flex justify-between text-xs">
+            <span className={textMut}>Market Cap</span>
+            <span className={`font-medium ${textPri}`}>{fmtVal(node.market_cap_usd)}</span>
+          </div>
+        )}
+        {node.total_funding_usd != null && (
+          <div className="flex justify-between text-xs">
+            <span className={textMut}>Total Funding</span>
+            <span className={`font-medium ${textPri}`}>{fmtVal(node.total_funding_usd)}</span>
+          </div>
+        )}
+      </div>
+
+      {/* View button */}
+      {node.in_db !== false && (
+        <div className={`px-4 py-3 border-t ${dark ? 'border-gray-700' : 'border-gray-100'}`}>
+          <button
+            onClick={() => onOpenCompany(node.id)}
+            className="w-full flex items-center justify-center gap-2 bg-bmw-blue hover:bg-[#2a7de8] text-white text-sm font-semibold py-2 rounded-lg transition-colors"
+          >
+            View Company Info
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
+            </svg>
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
  * HoverTooltip — owns its own state so hover updates never re-render the parent.
  * Parent hands down a `listenRef`: setting listenRef.current = setNode wires the channel.
  * onNodeHover calls listenRef.current(node) imperatively — zero parent re-renders.
@@ -1747,7 +1838,7 @@ function HoverTooltip({ listenRef, dark }) {
         <div className="text-xs text-bmw-blue mt-2">Click to see all investors</div>
       )}
       {node.in_db !== false && node.id !== INVESTOR_META_ID && (
-        <div className="text-xs text-bmw-blue mt-2">Click to open profile</div>
+        <div className="text-xs text-gray-400 mt-2">Click node to open details</div>
       )}
     </div>
   )
