@@ -12,6 +12,10 @@ log = logging.getLogger(__name__)
 SUPABASE_URL = (os.getenv("VITE_SUPABASE_URL") or os.getenv("SUPABASE_URL", "")).strip()
 SUPABASE_ANON_KEY = (os.getenv("SUPABASE_ANON_KEY") or os.getenv("VITE_SUPABASE_ANON_KEY", "")).strip()
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "").strip()
+WATCHLIST_REQUIRES_AUTH = os.getenv("WATCHLIST_REQUIRES_AUTH", "").strip().lower() in {
+    "1", "true", "yes", "on",
+}
+SHARED_WATCHLIST_USER = os.getenv("SHARED_WATCHLIST_USER", "shared").strip() or "shared"
 
 log.info("AUTH INIT: url=%s anon_key=%s jwt_secret=%s",
          bool(SUPABASE_URL), bool(SUPABASE_ANON_KEY), bool(SUPABASE_JWT_SECRET))
@@ -62,4 +66,9 @@ def get_user_id(authorization: str | None) -> str | None:
 
 
 def require_user(authorization: str | None = Header(default=None)) -> str | None:
-    return get_user_id(authorization)
+    uid = get_user_id(authorization)
+    if uid:
+        return uid
+    if WATCHLIST_REQUIRES_AUTH:
+        return None
+    return SHARED_WATCHLIST_USER
