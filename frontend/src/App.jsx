@@ -7,9 +7,11 @@ import PartnershipNetwork from './components/PartnershipNetwork'
 import ResearchPanel from './components/ResearchPanel'
 import WatchlistPanel from './components/WatchlistPanel'
 import CompanyDetailPage from './components/CompanyDetailPage'
-import { getSeedStatus, triggerSeed, getWatchlistDigest, getCompanies, getCompaniesMap, getCompaniesNetwork, getPartnershipGraph } from './api/client'
+import { getSeedStatus, triggerSeed, getWatchlistDigest, getCompanies, getCompaniesMap, getCompaniesNetwork, getPartnershipGraph, setAuthToken } from './api/client'
+import { supabase } from './lib/supabase'
 
 export default function App() {
+  const [session, setSession] = useState(null)
   const [activeTab, setActiveTab] = useState('watchlist')
   const [filters, setFilters] = useState({ search: '', types: [], statuses: [], segments: [], countries: [] })
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -18,6 +20,20 @@ export default function App() {
   const [detailCompanyId, setDetailCompanyId] = useState(null)
   const [dataImportOpen, setDataImportOpen] = useState(false)
   const seedPollRef = useRef(null)
+
+  // Auth: subscribe first so INITIAL_SESSION and SIGNED_IN events aren't missed,
+  // then call getSession() to hydrate from localStorage on hard refresh.
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
+      setSession(s)
+      setAuthToken(s?.access_token ?? null)
+    })
+    supabase.auth.getSession().then(({ data: { session: s } }) => {
+      setSession(s)
+      setAuthToken(s?.access_token ?? null)
+    }).catch(() => {})
+    return () => subscription.unsubscribe()
+  }, [])
 
   // Prefetch heavy list endpoints into the module-level cache on startup
   useEffect(() => {
@@ -98,6 +114,7 @@ export default function App() {
         setActiveTab={(tab) => { setDetailCompanyId(null); setActiveTab(tab) }}
         watchlistBreaking={watchlistBreaking}
         onOpenDataImport={() => setDataImportOpen(true)}
+        user={session?.user}
       />
 
       {/* Seeding banner */}

@@ -1,4 +1,4 @@
-"""Watchlist CRUD + digest endpoints — shared team list (no auth required)."""
+"""Watchlist CRUD + digest endpoints — per-user via Supabase auth, falls back to shared."""
 from __future__ import annotations
 
 import logging
@@ -9,19 +9,22 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend._util import safe_json
+from backend.auth import require_user
 from backend.database import get_db
 from backend.models import Company, WatchlistDigest, WatchlistEntry
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/watchlist", tags=["watchlist"])
 
-SHARED_USER = "shared"
 
 # ── Watchlist CRUD ──────────────────────────────────────────────────────────
 
 @router.get("")
-def list_watchlist(db: Session = Depends(get_db)):
-    entries = db.query(WatchlistEntry).filter_by(user_id=SHARED_USER).all()
+def list_watchlist(
+    user_id: str = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    entries = db.query(WatchlistEntry).filter_by(user_id=user_id).all()
     company_ids = [e.company_id for e in entries]
     companies = db.query(Company).filter(Company.id.in_(company_ids)).all() if company_ids else []
     company_map = {c.id: c for c in companies}
@@ -44,32 +47,38 @@ def list_watchlist(db: Session = Depends(get_db)):
 
 
 @router.post("/{company_id}")
-def add_to_watchlist(company_id: int, db: Session = Depends(get_db)):
+def add_to_watchlist(
+    company_id: int,
+    user_id: str = Depends(require_user),
+    db: Session = Depends(get_db),
+):
     company = db.query(Company).filter_by(id=company_id).first()
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
-    existing = db.query(WatchlistEntry).filter_by(company_id=company_id, user_id=SHARED_USER).first()
+    existing = db.query(WatchlistEntry).filter_by(company_id=company_id, user_id=user_id).first()
     if existing:
         return {"status": "already_watching", "company_id": company_id}
     entry = WatchlistEntry(
         company_id=company_id,
-        user_id=SHARED_USER,
+        user_id=user_id,
         added_at=datetime.now(timezone.utc).isoformat(),
     )
     db.add(entry)
     try:
         db.commit()
     except IntegrityError:
-        # Idempotent: a concurrent click or a legacy unique constraint racing
-        # with the migration should return success, not a 500.
         db.rollback()
         return {"status": "already_watching", "company_id": company_id}
     return {"status": "added", "company_id": company_id}
 
 
 @router.delete("/{company_id}")
-def remove_from_watchlist(company_id: int, db: Session = Depends(get_db)):
-    entry = db.query(WatchlistEntry).filter_by(company_id=company_id, user_id=SHARED_USER).first()
+def remove_from_watchlist(
+    company_id: int,
+    user_id: str = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    entry = db.query(WatchlistEntry).filter_by(company_id=company_id, user_id=user_id).first()
     if not entry:
         raise HTTPException(status_code=404, detail="Not in watchlist")
     db.delete(entry)
@@ -80,10 +89,13 @@ def remove_from_watchlist(company_id: int, db: Session = Depends(get_db)):
 # ── Digest endpoints ─────────────────────────────────────────────────────────
 
 @router.get("/digest/latest")
-def get_latest_digest(db: Session = Depends(get_db)):
+def get_latest_digest(
+    user_id: str = Depends(require_user),
+    db: Session = Depends(get_db),
+):
     company_ids = [
         cid for (cid,) in db.query(WatchlistEntry.company_id)
-        .filter(WatchlistEntry.user_id == SHARED_USER).all()
+        .filter(WatchlistEntry.user_id == user_id).all()
     ]
     if not company_ids:
         return []
@@ -112,7 +124,11 @@ def get_latest_digest(db: Session = Depends(get_db)):
 
 
 @router.post("/digest/run")
-def trigger_digest(background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+def trigger_digest(
+    background_tasks: BackgroundTasks,
+    user_id: str = Depends(require_user),
+    db: Session = Depends(get_db),
+):
     from backend.watchlist_digest import run_full_digest
 
     def _run():
@@ -131,6 +147,7 @@ def trigger_digest(background_tasks: BackgroundTasks, db: Session = Depends(get_
 def trigger_digest_one(
     company_id: int,
     background_tasks: BackgroundTasks,
+    user_id: str = Depends(require_user),
     db: Session = Depends(get_db),
 ):
     company = db.query(Company).filter_by(id=company_id).first()
