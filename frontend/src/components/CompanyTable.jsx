@@ -580,16 +580,17 @@ export default function CompanyTable({ filters, onOpenCompany }) {
         <span className="mx-1 text-gray-400">|</span>
         <span>Go To</span>
         <input
-          type="text"
-          inputMode="numeric"
-          pattern="[0-9]*"
-          className="w-20 border border-bmw-border rounded px-1.5 py-0.5 text-xs bg-white"
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              const v = Math.max(1, Math.min(totalPages, Number(e.target.value)))
-              setPage(v)
-            }
+          type="number"
+          min={1}
+          max={totalPages}
+          value={page}
+          onChange={(e) => {
+            const raw = e.target.value
+            if (raw === '') return
+            const v = Math.max(1, Math.min(totalPages, Number(raw)))
+            if (!Number.isNaN(v)) setPage(v)
           }}
+          className="w-20 border border-bmw-border rounded px-1.5 py-0.5 text-xs bg-white"
           placeholder="Page"
         />
       </div>
