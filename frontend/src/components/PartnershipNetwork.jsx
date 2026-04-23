@@ -144,7 +144,11 @@ function PartnershipNetwork({ onSelectCompany }) {
   // hoveredNodeRef: used inside canvas paintNode callback (stable ref, no re-render)
   // tooltipSetterRef: imperative channel to HoverTooltip — avoids triggering parent re-renders on hover
   const hoveredNodeRef = useRef(null)
+  const hoveredConnectedRef = useRef(null)  // Set of node IDs connected to hovered node (incl. itself), null when no hover
   const tooltipSetterRef = useRef(null)
+  // State version counter — incremented on hover change so paintNode/paintLink are recreated
+  // with a new function reference, forcing react-force-graph to pick up the latest callbacks.
+  const [hovVersion, setHovVersion] = useState(0)
   const clickedNodeRef = useRef(null)   // mirrors clickedNode state for canvas use
 
   // Clicked-node: store only the ID (never store the mutable D3 node object in state)
@@ -398,13 +402,19 @@ function PartnershipNetwork({ onSelectCompany }) {
 
   const handleNodeHover = useCallback((node) => {
     hoveredNodeRef.current = node || null
-    if (!rafRef.current) {
-      rafRef.current = requestAnimationFrame(() => {
-        rafRef.current = null
-        const fg = fgRef.current
-        if (fg && typeof fg.refresh === 'function') fg.refresh()
+    if (node) {
+      const connected = new Set([node.id])
+      displayGraphRef.current.links.forEach(l => {
+        const s = typeof l.source === 'object' ? l.source.id : l.source
+        const t = typeof l.target === 'object' ? l.target.id : l.target
+        if (s === node.id) connected.add(t)
+        if (t === node.id) connected.add(s)
       })
+      hoveredConnectedRef.current = connected
+    } else {
+      hoveredConnectedRef.current = null
     }
+    setHovVersion(v => v + 1)
     tooltipSetterRef.current?.(node || null)
   }, [])
 
@@ -637,6 +647,18 @@ function PartnershipNetwork({ onSelectCompany }) {
     const isSearch  = searchQuery && node.name.toLowerCase().includes(searchQuery.toLowerCase())
     const isHov     = hoveredNodeRef.current?.id === node.id
     const isClicked = clickedNodeRef.current === node.id
+    const connected = hoveredConnectedRef.current
+    const isDimmed  = connected != null && !connected.has(node.id)
+
+    // Dimmed — draw faint circle only, skip glow and label
+    if (isDimmed) {
+      ctx.globalAlpha = 0.1
+      ctx.beginPath(); ctx.arc(node.x, node.y, r, 0, Math.PI * 2)
+      ctx.fillStyle = fill; ctx.fill()
+      ctx.strokeStyle = border; ctx.lineWidth = 1; ctx.stroke()
+      ctx.globalAlpha = 1
+      return
+    }
 
     // Outer glow (hover / search) — use globalAlpha so HSL colors work too
     if (isHov || isSearch) {
@@ -687,7 +709,7 @@ function PartnershipNetwork({ onSelectCompany }) {
       : ((isHov || isClicked) ? '#0F172A' : '#374151')
     ctx.fillText(label, node.x, ty)
     ctx.textBaseline = 'alphabetic'
-  }, [searchQuery, scaleMetric, dark, maxValues, linkCounts])  // hoveredNode + clickedNode read via refs — no re-ticking
+  }, [searchQuery, scaleMetric, dark, maxValues, linkCounts, hovVersion])
 
   /* ── Canvas: link ── */
   const paintLink = useCallback((link, ctx, globalScale) => {
@@ -705,11 +727,16 @@ function PartnershipNetwork({ onSelectCompany }) {
     const cpX = (s.x + t.x) / 2 + nx * curve * dist * sign
     const cpY = (s.y + t.y) / 2 + ny * curve * dist * sign
 
+    const hovConn = hoveredConnectedRef.current
+    const hovId   = hoveredNodeRef.current?.id
+    const isHighlighted = hovConn == null || s.id === hovId || t.id === hovId
+
     const { color, alpha } = linkColor(link.type, link.date, dark)
+    const effectiveAlpha = isHighlighted ? alpha : alpha * 0.06
 
     ctx.strokeStyle = color
     ctx.lineWidth = Math.max(0.8, 1.8 / globalScale)
-    ctx.globalAlpha = alpha
+    ctx.globalAlpha = effectiveAlpha
     ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.quadraticCurveTo(cpX, cpY, t.x, t.y); ctx.stroke()
 
     // Arrowhead
@@ -721,7 +748,7 @@ function PartnershipNetwork({ onSelectCompany }) {
       const ay = toY - Math.sin(angle) * tr
       const al = Math.max(3.5, 6 / globalScale)
       const ah = Math.PI / 7
-      ctx.fillStyle = color; ctx.globalAlpha = alpha * 0.9
+      ctx.fillStyle = color; ctx.globalAlpha = effectiveAlpha * 0.9
       ctx.beginPath(); ctx.moveTo(ax, ay)
       ctx.lineTo(ax - al * Math.cos(angle - ah), ay - al * Math.sin(angle - ah))
       ctx.lineTo(ax - al * Math.cos(angle + ah), ay - al * Math.sin(angle + ah))
@@ -737,7 +764,7 @@ function PartnershipNetwork({ onSelectCompany }) {
     }
 
     ctx.globalAlpha = 1
-  }, [scaleMetric, dark, maxValues, linkCounts])
+  }, [scaleMetric, dark, maxValues, linkCounts, hovVersion])
 
   /* ── Hit area ── */
   const pointerArea = useCallback((node, color, ctx) => {

@@ -154,7 +154,7 @@ export default function App() {
           {activeTab === 'table' && (
             <CompanyTable filters={filters} onOpenCompany={handleOpenCompanyPage} />
           )}
-          {activeTab === 'watchlist' && <WatchlistPanel onOpenCompany={handleOpenCompanyPage} user={session?.user} />}
+          {activeTab === 'watchlist' && <WatchlistPanel onOpenCompany={handleOpenCompanyPage} />}
 {activeTab === 'network' && (
             <PartnershipNetwork onSelectCompany={handleOpenCompanyPage} />
           )}

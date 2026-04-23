@@ -27,9 +27,10 @@ def get_user_id(authorization: str = Header(default=None)) -> str | None:
         return None
 
 
+DEFAULT_USER = "shared"
+
 def require_user(authorization: str = Header(default=None)) -> str:
-    """Like get_user_id but raises 401 if not authenticated."""
+    """Return user_id from JWT if present, otherwise fall back to shared user.
+    Watchlist is a shared team list when Supabase auth is not configured."""
     uid = get_user_id(authorization)
-    if not uid:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    return uid
+    return uid or DEFAULT_USER
