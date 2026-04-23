@@ -1,9 +1,9 @@
 import React from 'react'
 
 const TABS = [
+  { id: 'watchlist', label: 'Watchlist' },
   { id: 'map', label: 'Company Map' },
   { id: 'table', label: 'Company Table' },
-  { id: 'watchlist', label: 'Watchlist' },
   { id: 'network', label: 'Partnership Network' },
 ]
 
