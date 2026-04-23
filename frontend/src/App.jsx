@@ -8,37 +8,16 @@ import ResearchPanel from './components/ResearchPanel'
 import WatchlistPanel from './components/WatchlistPanel'
 import CompanyDetailPage from './components/CompanyDetailPage'
 import { getSeedStatus, triggerSeed, getWatchlistDigest, getCompanies, getCompaniesMap, getCompaniesNetwork, getPartnershipGraph } from './api/client'
-import { supabase } from './lib/supabase'
-import { setAuthToken } from './api/client'
 
 export default function App() {
-  const [session, setSession] = useState(null)
   const [activeTab, setActiveTab] = useState('watchlist')
   const [filters, setFilters] = useState({ search: '', types: [], statuses: [], segments: [], countries: [] })
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [highlightCompany, setHighlightCompany] = useState(null)
   const [seedBanner, setSeedBanner] = useState(false)
-  // Company detail full page view
   const [detailCompanyId, setDetailCompanyId] = useState(null)
   const [dataImportOpen, setDataImportOpen] = useState(false)
   const seedPollRef = useRef(null)
-
-  // Auth: listen for Supabase session changes
-  useEffect(() => {
-    // Subscribe first so we don't miss the INITIAL_SESSION event that fires
-    // when getSession() resolves the URL hash tokens after an OAuth redirect.
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, s) => {
-      console.log('[Auth] event:', event, 'user:', s?.user?.email ?? 'none')
-      setSession(s)
-      setAuthToken(s?.access_token ?? null)
-    })
-    supabase.auth.getSession().then(({ data: { session: s } }) => {
-      console.log('[Auth] getSession:', s?.user?.email ?? 'no session')
-      setSession(s)
-      setAuthToken(s?.access_token ?? null)
-    })
-    return () => subscription.unsubscribe()
-  }, [])
 
   // Prefetch heavy list endpoints into the module-level cache on startup
   useEffect(() => {
@@ -70,9 +49,8 @@ export default function App() {
 
   const [watchlistBreaking, setWatchlistBreaking] = useState(0)
 
-  // Poll for breaking news count to show badge in navbar (only when logged in)
+  // Poll for breaking news badge in navbar
   useEffect(() => {
-    if (!session) return
     function checkBreaking() {
       getWatchlistDigest()
         .then(({ data }) => setWatchlistBreaking(data.filter((d) => d.has_breaking).length))
@@ -81,7 +59,7 @@ export default function App() {
     checkBreaking()
     const iv = setInterval(checkBreaking, 60000)
     return () => clearInterval(iv)
-  }, [session])
+  }, [])
 
   useEffect(() => {
     getSeedStatus()
@@ -106,7 +84,6 @@ export default function App() {
     return () => clearInterval(seedPollRef.current)
   }, [])
 
-  // Navigate to full company detail page
   const handleOpenCompanyPage = useCallback((id) => setDetailCompanyId(id), [])
   const handleCloseCompanyPage = useCallback(() => setDetailCompanyId(null), [])
 
@@ -119,7 +96,6 @@ export default function App() {
         setActiveTab={(tab) => { setDetailCompanyId(null); setActiveTab(tab) }}
         watchlistBreaking={watchlistBreaking}
         onOpenDataImport={() => setDataImportOpen(true)}
-        user={session?.user}
       />
 
       {/* Seeding banner */}
@@ -131,7 +107,6 @@ export default function App() {
       )}
 
       <div className="flex flex-1 overflow-hidden min-h-0 bg-white">
-        {/* Sidebar — only for map and table views */}
         {showSidebar && (
           <Sidebar
             filters={filters}
@@ -142,7 +117,6 @@ export default function App() {
           />
         )}
 
-        {/* Main content */}
         <main className="flex-1 min-w-0 min-h-0 flex flex-col overflow-y-auto overflow-x-hidden">
           {activeTab === 'map' && (
             <CompanyMap
@@ -154,8 +128,8 @@ export default function App() {
           {activeTab === 'table' && (
             <CompanyTable filters={filters} onOpenCompany={handleOpenCompanyPage} />
           )}
-          {activeTab === 'watchlist' && <WatchlistPanel onOpenCompany={handleOpenCompanyPage} user={session?.user} />}
-{activeTab === 'network' && (
+          {activeTab === 'watchlist' && <WatchlistPanel onOpenCompany={handleOpenCompanyPage} />}
+          {activeTab === 'network' && (
             <PartnershipNetwork onSelectCompany={handleOpenCompanyPage} />
           )}
         </main>
@@ -164,14 +138,11 @@ export default function App() {
       {/* Company detail drawer */}
       {detailCompanyId && (
         <div className="fixed inset-0 z-[1100] flex">
-          {/* Backdrop — click to close */}
           <div className="flex-1 bg-black/20" onClick={handleCloseCompanyPage} />
-          {/* Panel */}
           <div
             style={{ width: panelWidth }}
             className="relative bg-white shadow-2xl flex flex-col overflow-hidden border-l border-gray-200 animate-slide-in-right shrink-0"
           >
-            {/* Drag handle — left edge */}
             <div
               onMouseDown={startPanelResize}
               className="absolute left-0 top-0 w-1.5 h-full cursor-col-resize z-20 group"
@@ -211,4 +182,3 @@ export default function App() {
     </div>
   )
 }
-

@@ -2,19 +2,6 @@ import axios from 'axios'
 
 const api = axios.create({ baseURL: '/api' })
 
-// Auth token — set by App.jsx when session changes
-let _authToken = null
-export function setAuthToken(token) {
-  _authToken = token
-}
-
-// Watchlist axios instance — always sends auth header
-const watchlistApi = axios.create({ baseURL: '/api' })
-watchlistApi.interceptors.request.use((config) => {
-  if (_authToken) config.headers['Authorization'] = `Bearer ${_authToken}`
-  return config
-})
-
 // In-session cache for large list endpoints — keyed by URL string.
 // Stores the promise itself so concurrent callers share one in-flight request.
 const _cache = new Map()
@@ -60,8 +47,6 @@ export const getPartnership = (id) => api.get(`/partnerships/${id}`)
 export const createPartnership = (data) => api.post('/partnerships', data)
 export const getPartnershipGraph = () => cached('partnerships:graph', () => api.get('/partnerships/graph'))
 export const enrichPartnershipNetwork = () => {
-  // A successful enrichment mutates node/link types; invalidate the cache so
-  // the next Network-tab open fetches fresh classifications.
   bustCache('partnerships:graph')
   return api.post('/partnerships/enrich')
 }
@@ -94,13 +79,13 @@ export const uploadPartnerships = (file) => {
 export const getJob = (id) => api.get(`/jobs/${id}`)
 export const listJobs = () => api.get('/jobs')
 
-// Watchlist (requires auth)
-export const getWatchlist = () => watchlistApi.get('/watchlist')
-export const addToWatchlist = (companyId) => watchlistApi.post(`/watchlist/${companyId}`)
-export const removeFromWatchlist = (companyId) => watchlistApi.delete(`/watchlist/${companyId}`)
-export const getWatchlistDigest = () => watchlistApi.get('/watchlist/digest/latest')
-export const triggerWatchlistDigest = () => watchlistApi.post('/watchlist/digest/run')
-export const triggerCompanyDigest = (companyId) => watchlistApi.post(`/watchlist/digest/run/${companyId}`)
+// Watchlist
+export const getWatchlist = () => api.get('/watchlist')
+export const addToWatchlist = (companyId) => api.post(`/watchlist/${companyId}`)
+export const removeFromWatchlist = (companyId) => api.delete(`/watchlist/${companyId}`)
+export const getWatchlistDigest = () => api.get('/watchlist/digest/latest')
+export const triggerWatchlistDigest = () => api.post('/watchlist/digest/run')
+export const triggerCompanyDigest = (companyId) => api.post(`/watchlist/digest/run/${companyId}`)
 
 // Sync/Seed
 export const getSyncStatus = () => api.get('/sync/status')

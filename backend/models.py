@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Index, Integer, Text, Float, ForeignKey
+from sqlalchemy import Column, Index, Integer, Text, Float, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
 from backend.database import Base
 
@@ -218,10 +218,11 @@ Index("ix_metric_name", CompanyMetric.metric_name)
 
 class WatchlistEntry(Base):
     __tablename__ = "watchlist"
+    __table_args__ = (UniqueConstraint('company_id', 'user_id', name='uq_watchlist_company_user'),)
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     company_id = Column(Integer, ForeignKey("companies.id"), nullable=False)
-    user_id = Column(Text, nullable=True, index=True)   # Supabase auth UID; NULL = legacy global entry
+    user_id = Column(Text, nullable=True, index=True)
     added_at = Column(Text)
 
 
