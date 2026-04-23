@@ -107,6 +107,14 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany, d
     if (!container) return
     const scrollTop = container.scrollTop
     const ids = ['overview', 'facilities', 'partnerships', 'news', 'ai', 'similar', 'citations']
+
+    // If we're at (or very near) the bottom, force the last section active
+    const atBottom = container.scrollHeight - scrollTop - container.clientHeight < 8
+    if (atBottom) {
+      setActiveSection(ids[ids.length - 1])
+      return
+    }
+
     let current = ids[0]
     for (const id of ids) {
       const el = sectionRefs.current[id]
@@ -282,7 +290,7 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany, d
   return (
     <div className="h-full flex flex-col overflow-hidden">
       {/* ── Top header ── */}
-      <div className="bg-bmw-navy text-white px-6 py-4 flex-shrink-0">
+      <div className="bg-bmw-navy text-white px-6 py-4 flex-shrink-0 sticky top-0 z-10">
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-start gap-3 min-w-0 flex-1">
             {company.company_website && (
@@ -316,7 +324,7 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany, d
       </div>
 
       {/* ── Section tabs ── */}
-      <div className="bg-white border-b border-bmw-border px-6 flex items-center gap-1 overflow-x-auto">
+      <div className="bg-white border-b border-bmw-border px-6 flex items-center gap-1 overflow-x-auto sticky top-0 z-10">
         {sections.map((s) => (
           <button
             key={s.id}
@@ -375,28 +383,54 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany, d
                 </div>
               </div>
 
-              {/* Stats grid */}
+              {/* Financial highlights row */}
+              {(company.market_cap_usd || company.revenue_usd || company.total_funding_usd || company.number_of_employees || company.employee_size) && (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  {company.market_cap_usd && (
+                    <div className="bg-bmw-gray-light rounded-lg px-4 py-3 text-center">
+                      <div className="text-lg font-bold text-bmw-navy">{formatMoney(company.market_cap_usd)}</div>
+                      <div className="text-xs text-gray-500 mt-0.5">Market Cap</div>
+                    </div>
+                  )}
+                  {company.revenue_usd && (
+                    <div className="bg-bmw-gray-light rounded-lg px-4 py-3 text-center">
+                      <div className="text-lg font-bold text-bmw-navy">{formatMoney(company.revenue_usd)}</div>
+                      <div className="text-xs text-gray-500 mt-0.5">Revenue</div>
+                    </div>
+                  )}
+                  {company.total_funding_usd && (
+                    <div className="bg-bmw-gray-light rounded-lg px-4 py-3 text-center">
+                      <div className="text-lg font-bold text-bmw-navy">{formatMoney(company.total_funding_usd)}</div>
+                      <div className="text-xs text-gray-500 mt-0.5">Total Funding</div>
+                    </div>
+                  )}
+                  {(company.number_of_employees || company.employee_size) && (
+                    <div className="bg-bmw-gray-light rounded-lg px-4 py-3 text-center">
+                      <div className="text-lg font-bold text-bmw-navy">
+                        {company.number_of_employees ? company.number_of_employees.toLocaleString() : company.employee_size}
+                      </div>
+                      <div className="text-xs text-gray-500 mt-0.5">Employees</div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Full info grid — mirrors company table columns */}
               <div className="grid grid-cols-2 gap-3">
-                <InfoCard label="HQ" value={[company.company_hq_city, company.company_hq_state, company.company_hq_country].filter(Boolean).join(', ')} />
-                <InfoCard label="Industry Segment" value={company.industry_segment || company.supply_chain_segment} />
                 <InfoCard label="Company Type" value={company.company_type} />
                 <InfoCard label="Status" value={company.company_status} />
-                <InfoCard label="Employees" value={company.number_of_employees?.toLocaleString() || company.employee_size} />
-                <InfoCard label="Market Cap" value={formatMoney(company.market_cap_usd)} />
-                <InfoCard label="Revenue" value={formatMoney(company.revenue_usd)} />
-                <InfoCard label="Total Funding" value={formatMoney(company.total_funding_usd)} />
-                <InfoCard label="Last Fundraise" value={company.last_fundraise_date} />
-                <InfoCard label="Funding Status" value={company.funding_status} />
+                <InfoCard label="Segment" value={company.supply_chain_segment || company.industry_segment} />
+                <InfoCard label="Funding Stage" value={company.funding_status} />
+                <InfoCard label="HQ" value={[company.company_hq_city, company.company_hq_state, company.company_hq_country].filter(Boolean).join(', ')} />
                 <InfoCard label="Founding Year" value={company.founding_year} />
+                <InfoCard label="Last Fundraise" value={company.last_fundraise_date} />
                 <InfoCard label="Chemistries" value={company.chemistries} />
                 <InfoCard label="Feedstock" value={company.feedstock} />
                 <InfoCard label="Plant Start Date" value={company.plant_start_date} />
-                <InfoCard label="NAATBatt Member" value={company.naatbatt_member ? 'Yes' : 'No'} />
-                <InfoCard label="Volta Member" value={company.volta_member ? 'Yes' : 'No'} />
+                {company.hq_company && <InfoCard label="Parent Company" value={company.hq_company} />}
+                <InfoCard label="NAATBatt Member" value={company.naatbatt_member ? 'Yes' : undefined} />
+                <InfoCard label="Volta Member" value={company.volta_member ? 'Yes' : undefined} />
                 <InfoCard label="Data Source" value={company.data_source} />
-                {company.hq_company && (
-                  <InfoCard label="Parent Company" value={company.hq_company} />
-                )}
               </div>
 
               {/* Links */}

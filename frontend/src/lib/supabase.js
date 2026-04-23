@@ -15,6 +15,7 @@ export const supabase = createClient(
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: true,
+      flowType: 'implicit',  // simpler for SPAs — tokens arrive in URL hash, no server callback needed
     },
   }
 )

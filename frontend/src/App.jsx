@@ -25,10 +25,9 @@ export default function App() {
 
   // Auth: listen for Supabase session changes
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session: s } }) => {
-      setSession(s)
-      setAuthToken(s?.access_token ?? null)
-    })
+    // onAuthStateChange fires INITIAL_SESSION immediately with whatever session
+    // exists (localStorage or URL hash after OAuth redirect) — this is the
+    // primary source of truth. getSession() is a fallback.
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
       setSession(s)
       setAuthToken(s?.access_token ?? null)

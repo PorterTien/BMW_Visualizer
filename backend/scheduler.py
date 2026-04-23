@@ -48,8 +48,8 @@ def start_scheduler():
     _scheduler = BackgroundScheduler()
     _scheduler.add_job(
         _run_refresh,
-        trigger=CronTrigger(day_of_week="sun", hour=2, minute=0),
-        id="naatbatt_weekly_refresh",
+        trigger=CronTrigger(hour=3, minute=0),  # every day at 03:00 UTC
+        id="naatbatt_daily_refresh",
         replace_existing=True,
     )
     _scheduler.add_job(
@@ -59,7 +59,7 @@ def start_scheduler():
         replace_existing=True,
     )
     _scheduler.start()
-    log.info("APScheduler started — weekly NAATBatt refresh Sundays 02:00, watchlist digest daily 07:00.")
+    log.info("APScheduler started — daily NAATBatt refresh 03:00 UTC, watchlist digest 07:00 UTC.")
 
 
 def stop_scheduler():

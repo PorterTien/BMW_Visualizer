@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { getSyncStatus, triggerSync } from '../api/client'
 import { signOut, signInWithGoogle } from '../lib/supabase'
 
 const TABS = [
@@ -10,16 +9,8 @@ const TABS = [
 ]
 
 export default function Navbar({ activeTab, setActiveTab, watchlistBreaking = 0, onOpenDataImport = () => {}, user = null }) {
-  const [syncInfo, setSyncInfo] = useState(null)
-  const [syncing, setSyncing] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
   const profileRef = useRef(null)
-
-  useEffect(() => {
-    loadSync()
-    const interval = setInterval(loadSync, 60000)
-    return () => clearInterval(interval)
-  }, [])
 
   // Close profile dropdown on outside click
   useEffect(() => {
@@ -31,26 +22,6 @@ export default function Navbar({ activeTab, setActiveTab, watchlistBreaking = 0,
     document.addEventListener('mousedown', onClickOutside)
     return () => document.removeEventListener('mousedown', onClickOutside)
   }, [])
-
-  async function loadSync() {
-    try {
-      const { data } = await getSyncStatus()
-      setSyncInfo(data)
-    } catch (_) {}
-  }
-
-  async function handleSync() {
-    setSyncing(true)
-    try {
-      await triggerSync()
-      setTimeout(loadSync, 3000)
-    } catch (_) {}
-    setTimeout(() => setSyncing(false), 2000)
-  }
-
-  const lastSynced = syncInfo?.last_sync?.run_at
-    ? new Date(syncInfo.last_sync.run_at).toLocaleDateString()
-    : 'Never'
 
   const avatarUrl = user?.user_metadata?.avatar_url
   const displayName = user?.user_metadata?.full_name || user?.email || 'User'
@@ -96,18 +67,8 @@ export default function Navbar({ activeTab, setActiveTab, watchlistBreaking = 0,
           ))}
         </div>
 
-        {/* Right side: Sync + Data Import + Profile */}
+        {/* Right side: Data Import + Profile */}
         <div className="flex items-center gap-2 min-w-fit">
-          <span className="text-bmw-text-secondary text-xs whitespace-nowrap">
-            Synced: <span className="text-bmw-text-primary font-medium">{lastSynced}</span>
-          </span>
-          <button
-            onClick={handleSync}
-            disabled={syncing}
-            className="bg-bmw-blue hover:bg-[#3a88ee] text-white disabled:opacity-40 text-xs px-4 py-1.5 rounded font-medium transition-colors"
-          >
-            {syncing ? 'Syncing…' : 'Sync Now'}
-          </button>
           <button
             onClick={() => onOpenDataImport()}
             className="bg-bmw-blue hover:bg-[#3a88ee] text-white text-xs px-4 py-1.5 rounded font-medium transition-colors"
@@ -136,9 +97,6 @@ export default function Navbar({ activeTab, setActiveTab, watchlistBreaking = 0,
                   </svg>
                 </div>
               )}
-              <svg className="w-3 h-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-              </svg>
             </button>
 
             {profileOpen && (
