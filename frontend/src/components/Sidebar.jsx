@@ -7,11 +7,17 @@ const STATUSES = [
 ]
 
 const SEGMENTS = [
+  'Raw Materials',
+  'Battery Grade Materials',
+  'Other Battery Components & Materials',
+  'Electrode & Cell Manufacturing',
+  'Module & Pack Manufacturing',
+  'End-of-life Recycling',
+  'Equipment Manufacturing',
+  'R&D',
+  'Technical Consulting Services',
+  'Modeling & Software',
   'Upstream', 'Midstream', 'Downstream',
-  'Raw Materials', 'Battery Grade Materials', 'Other Battery Components & Materials',
-  'Electrode & Cell Manufacturing', 'Module & Pack Manufacturing',
-  'Equipment Manufacturing', 'End-of-life Recycling',
-  'R&D', 'Modeling & Software', 'Technical Consulting Services',
   'Legal & Financial Services', 'Vehicle OEM', 'Education', 'Government',
 ]
 
