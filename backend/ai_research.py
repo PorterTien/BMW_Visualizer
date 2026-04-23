@@ -458,7 +458,9 @@ def research_employee_count(company_name: str) -> dict:
         f"(site:linkedin.com OR annual report OR 10-K OR crunchbase) 2024 2025"
     )
     try:
-        snippets = perplexity_search(query)
+        # Employee enrichment can fan out across many companies; keep each
+        # lookup bounded so one slow query doesn't stall the whole job.
+        snippets = perplexity_search(query, max_retries=1)
     except Exception as e:
         log.warning("Employee search failed for %r: %s", company_name, e)
         return {"number_of_employees": None, "error": str(e)}

@@ -236,7 +236,7 @@ async def _enrich_employees_bg(job_id: int):
     network. Respects `manual_overrides` (never stomps a human edit)."""
     from backend.ai_research import research_employee_count
 
-    CONCURRENCY = 10
+    CONCURRENCY = 16
 
     def _parse_employee_size_midpoint(raw: str | None) -> int | None:
         if not raw:
@@ -250,6 +250,31 @@ async def _enrich_employees_bg(job_id: int):
         if lo <= 0 or hi < lo:
             return None
         return int(round((lo + hi) / 2))
+
+    def _parse_headcount_from_text(*chunks: str | None) -> int | None:
+        blob = " ".join((c or "") for c in chunks).lower()
+        if not blob.strip():
+            return None
+        # Prefer explicit employee/headcount references in local company text.
+        m_range = re.search(
+            r"(?:employees?|headcount|workforce)[^0-9]{0,35}(\d{1,3}(?:,\d{3})?)\s*[-–]\s*(\d{1,3}(?:,\d{3})?)",
+            blob,
+        )
+        if m_range:
+            lo = int(m_range.group(1).replace(",", ""))
+            hi = int(m_range.group(2).replace(",", ""))
+            if 1 <= lo <= hi <= 2_000_000:
+                return int(round((lo + hi) / 2))
+
+        m_single = re.search(
+            r"(?:employees?|headcount|workforce)[^0-9]{0,20}(\d{2,3}(?:,\d{3}){0,2})\b",
+            blob,
+        )
+        if m_single:
+            n = int(m_single.group(1).replace(",", ""))
+            if 10 <= n <= 2_000_000:
+                return n
+        return None
 
     def _mark(db, status: str, payload: dict) -> None:
         j = db.query(ResearchJob).filter(ResearchJob.id == job_id).first()
@@ -284,6 +309,11 @@ async def _enrich_employees_bg(job_id: int):
                 Company.company_name,
                 Company.manual_overrides,
                 Company.employee_size,
+                Company.summary,
+                Company.long_description,
+                Company.description,
+                Company.notes,
+                Company.extra_description,
             )
             .filter(Company.id.in_(network_ids))
             .filter(
@@ -296,7 +326,7 @@ async def _enrich_employees_bg(job_id: int):
         # Stage 1 (instant): fill from existing employee_size ranges, no web calls.
         updated = 0
         prefetched_ids: set[int] = set()
-        for cid, _name, overrides_json, employee_size in targets:
+        for cid, _name, overrides_json, employee_size, *_txt in targets:
             if "number_of_employees" in set(_safe_json(overrides_json, [])):
                 continue
             midpoint = _parse_employee_size_midpoint(employee_size)
@@ -310,7 +340,24 @@ async def _enrich_employees_bg(job_id: int):
         if prefetched_ids:
             db.commit()
 
-        unresolved = [(cid, name, ov, es) for cid, name, ov, es in targets if cid not in prefetched_ids]
+        # Stage 1b (instant): extract from existing local text fields, no web calls.
+        for cid, _name, overrides_json, _employee_size, summary, long_desc, desc, notes, extra_desc in targets:
+            if cid in prefetched_ids:
+                continue
+            if "number_of_employees" in set(_safe_json(overrides_json, [])):
+                continue
+            local_n = _parse_headcount_from_text(summary, long_desc, desc, notes, extra_desc)
+            if local_n:
+                c = db.query(Company).filter(Company.id == cid).first()
+                if c and not c.number_of_employees:
+                    c.number_of_employees = local_n
+                    c.last_updated = datetime.now(timezone.utc).isoformat()
+                    prefetched_ids.add(cid)
+                    updated += 1
+        if prefetched_ids:
+            db.commit()
+
+        unresolved = [(cid, name, ov, es) for cid, name, ov, es, *_ in targets if cid not in prefetched_ids]
 
         # Stage 2 (network): dedupe by normalized company name so aliases like
         # "24 M Technologies" + "24M Technologies" share one lookup.
@@ -336,7 +383,10 @@ async def _enrich_employees_bg(job_id: int):
             cid0, name0, _ov0, _es0 = group_rows[0]
             async with sem:
                 try:
-                    data = await loop.run_in_executor(None, research_employee_count, name0)
+                    data = await asyncio.wait_for(
+                        loop.run_in_executor(None, research_employee_count, name0),
+                        timeout=12,
+                    )
                 except Exception as e:
                     log.warning("employee lookup crashed for %r: %s", name0, e)
                     data = {"number_of_employees": None, "error": str(e)}
@@ -368,8 +418,9 @@ async def _enrich_employees_bg(job_id: int):
                 inner.close()
 
             processed += len(group_rows)
-            # Heartbeat every 5 rows (and always on the last one).
-            if processed % 5 == 0 or processed == total:
+            # Heartbeat every 20 rows (and always on the last one) to reduce
+            # DB write pressure while still keeping useful progress feedback.
+            if processed % 20 == 0 or processed == total:
                 hb = SessionLocal()
                 try:
                     _mark(hb, "running", {
