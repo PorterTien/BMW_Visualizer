@@ -33,7 +33,7 @@ export const getCompanies = (params) => {
 export const getCompany = (id) => api.get(`/companies/${id}`)
 export const getCompanyDetail = (id) => api.get(`/companies/${id}/detail`)
 export const getCompaniesMap = () => cached('companies:map', () => api.get('/companies/map'))
-export const getCompaniesNetwork = () => api.get('/companies/network')
+export const getCompaniesNetwork = () => cached('companies:network', () => api.get('/companies/network'))
 export const researchCompany = (company_name) =>
   api.post('/companies/research', { company_name })
 export const chatWithCompany = (company_id, message) =>
