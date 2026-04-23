@@ -615,28 +615,34 @@ export default function CompanyTable({ filters, onOpenCompany }) {
           Prev
         </button>
 
-        {Array.from({ length: Math.min(4, totalPages) }, (_, i) => i + 1).map((p) => (
-          <button
-            key={p}
-            onClick={() => setPage(p)}
-            className={`w-6 h-6 rounded text-center ${
-              page === p ? 'bg-bmw-blue text-white font-bold' : 'hover:bg-gray-200'
-            }`}
-          >
-            {p}
-          </button>
-        ))}
-        {totalPages > 4 && <span>…</span>}
-        {totalPages > 4 && (
-          <button
-            onClick={() => setPage(totalPages)}
-            className={`w-6 h-6 rounded text-center ${
-              page === totalPages ? 'bg-bmw-blue text-white font-bold' : 'hover:bg-gray-200'
-            }`}
-          >
-            {totalPages}
-          </button>
-        )}
+        {(() => {
+          const allPages = []
+          const addPage = (p) => { if (!allPages.includes(p)) allPages.push(p) }
+          addPage(1)
+          for (let p = Math.max(2, page - 2); p <= Math.min(totalPages - 1, page + 2); p++) addPage(p)
+          if (totalPages > 1) addPage(totalPages)
+          allPages.sort((a, b) => a - b)
+
+          const items = []
+          for (let i = 0; i < allPages.length; i++) {
+            if (i > 0 && allPages[i] - allPages[i - 1] > 1) {
+              items.push(<span key={`ellipsis-${i}`} className="px-0.5 text-gray-400">…</span>)
+            }
+            const p = allPages[i]
+            items.push(
+              <button
+                key={p}
+                onClick={() => setPage(p)}
+                className={`w-6 h-6 rounded text-center ${
+                  page === p ? 'bg-bmw-blue text-white font-bold' : 'hover:bg-gray-200'
+                }`}
+              >
+                {p}
+              </button>
+            )
+          }
+          return items
+        })()}
 
         <button
           onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
