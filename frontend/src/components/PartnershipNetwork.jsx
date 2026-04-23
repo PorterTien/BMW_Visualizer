@@ -399,10 +399,8 @@ function PartnershipNetwork({ onSelectCompany }) {
         setClickedLink(null)
         setClickedNodeData(null)
       } else {
-        // Append to the multi-select trail. Clicking the same node again is
-        // a no-op on the set but refocuses it so the panel updates.
-        const next = new Set(selectedIdsRef.current)
-        next.add(node.id)
+        // Single-select: clicking a node replaces the selection entirely.
+        const next = new Set([node.id])
         selectedIdsRef.current = next
         setSelectedIds(next)
         setFocusedNodeId(node.id)
