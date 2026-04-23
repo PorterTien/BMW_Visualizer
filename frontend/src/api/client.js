@@ -15,11 +15,24 @@ watchlistApi.interceptors.request.use((config) => {
   return config
 })
 
+// In-session cache for large list endpoints — keyed by URL string.
+// Stores the promise itself so concurrent callers share one in-flight request.
+const _cache = new Map()
+function cached(key, fetcher) {
+  if (!_cache.has(key)) _cache.set(key, fetcher())
+  return _cache.get(key)
+}
+export function bustCache(key) { _cache.delete(key) }
+
 // Companies
-export const getCompanies = (params) => api.get('/companies', { params })
+export const getCompanies = (params) => {
+  // Only cache the full 2000-record list used by the table and sidebar.
+  if (params?.limit === 2000) return cached('companies:2000', () => api.get('/companies', { params }))
+  return api.get('/companies', { params })
+}
 export const getCompany = (id) => api.get(`/companies/${id}`)
 export const getCompanyDetail = (id) => api.get(`/companies/${id}/detail`)
-export const getCompaniesMap = () => api.get('/companies/map')
+export const getCompaniesMap = () => cached('companies:map', () => api.get('/companies/map'))
 export const getCompaniesNetwork = () => api.get('/companies/network')
 export const researchCompany = (company_name) =>
   api.post('/companies/research', { company_name })
