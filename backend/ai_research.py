@@ -466,9 +466,40 @@ def research_employee_count(company_name: str) -> dict:
     if not snippets or snippets.startswith("Search failed"):
         return {"number_of_employees": None, "error": "no_results"}
 
+    # Fast path: if snippets already contain an explicit range/count near
+    # employee-related words, parse directly and skip Claude synthesis.
+    # This removes the second model call for many companies.
+    text = snippets.lower()
+    m_range = re.search(
+        r"(?:employees?|headcount|workforce)[^0-9]{0,40}(\d{1,3}(?:,\d{3})?)\s*[-–]\s*(\d{1,3}(?:,\d{3})?)",
+        text,
+    )
+    if m_range:
+        lo = int(m_range.group(1).replace(",", ""))
+        hi = int(m_range.group(2).replace(",", ""))
+        if 0 < lo <= hi:
+            return {
+                "number_of_employees": int(round((lo + hi) / 2)),
+                "employee_size": f"{lo}-{hi}",
+                "confidence": "medium",
+            }
+
+    m_single = re.search(
+        r"(?:employees?|headcount|workforce)[^0-9]{0,25}(\d{2,3}(?:,\d{3}){0,2})\b",
+        text,
+    )
+    if m_single:
+        n = int(m_single.group(1).replace(",", ""))
+        if 10 <= n <= 2_000_000:
+            return {
+                "number_of_employees": n,
+                "employee_size": None,
+                "confidence": "medium",
+            }
+
     user_msg = (
         f"Target company: {company_name}\n\n"
-        f"Search results:\n{snippets[:8000]}"
+        f"Search results:\n{snippets[:4500]}"
     )
     try:
         data = _claude_json(_EMPLOYEE_SYSTEM_PROMPT, user_msg)

@@ -236,7 +236,20 @@ async def _enrich_employees_bg(job_id: int):
     network. Respects `manual_overrides` (never stomps a human edit)."""
     from backend.ai_research import research_employee_count
 
-    CONCURRENCY = 4
+    CONCURRENCY = 10
+
+    def _parse_employee_size_midpoint(raw: str | None) -> int | None:
+        if not raw:
+            return None
+        s = str(raw).strip().lower().replace("employees", "").replace("employee", "")
+        m = re.search(r"(\d{1,3}(?:,\d{3})?)\s*[-–]\s*(\d{1,3}(?:,\d{3})?)", s)
+        if not m:
+            return None
+        lo = int(m.group(1).replace(",", ""))
+        hi = int(m.group(2).replace(",", ""))
+        if lo <= 0 or hi < lo:
+            return None
+        return int(round((lo + hi) / 2))
 
     def _mark(db, status: str, payload: dict) -> None:
         j = db.query(ResearchJob).filter(ResearchJob.id == job_id).first()
@@ -266,7 +279,12 @@ async def _enrich_employees_bg(job_id: int):
 
         # Only companies missing a real employee count.
         targets = (
-            db.query(Company.id, Company.company_name, Company.manual_overrides)
+            db.query(
+                Company.id,
+                Company.company_name,
+                Company.manual_overrides,
+                Company.employee_size,
+            )
             .filter(Company.id.in_(network_ids))
             .filter(
                 (Company.number_of_employees.is_(None))
@@ -275,28 +293,52 @@ async def _enrich_employees_bg(job_id: int):
             .all()
         )
 
+        # Stage 1 (instant): fill from existing employee_size ranges, no web calls.
+        updated = 0
+        prefetched_ids: set[int] = set()
+        for cid, _name, overrides_json, employee_size in targets:
+            if "number_of_employees" in set(_safe_json(overrides_json, [])):
+                continue
+            midpoint = _parse_employee_size_midpoint(employee_size)
+            if midpoint:
+                c = db.query(Company).filter(Company.id == cid).first()
+                if c and not c.number_of_employees:
+                    c.number_of_employees = midpoint
+                    c.last_updated = datetime.now(timezone.utc).isoformat()
+                    prefetched_ids.add(cid)
+                    updated += 1
+        if prefetched_ids:
+            db.commit()
+
+        unresolved = [(cid, name, ov, es) for cid, name, ov, es in targets if cid not in prefetched_ids]
+
+        # Stage 2 (network): dedupe by normalized company name so aliases like
+        # "24 M Technologies" + "24M Technologies" share one lookup.
+        by_key: dict[str, list[tuple[int, str, str | None, str | None]]] = {}
+        for row in unresolved:
+            cid, name, ov, es = row
+            key = _norm_company_name(name) or name.strip().lower()
+            by_key.setdefault(key, []).append((cid, name, ov, es))
+        dedup_targets = list(by_key.values())
+
         total = len(targets)
         if total == 0:
             _mark(db, "complete", {"processed": 0, "total": 0, "updated": 0, "failed": 0})
             return
 
-        processed = 0
-        updated = 0
+        processed = len(prefetched_ids)
         failed = 0
         sem = asyncio.Semaphore(CONCURRENCY)
         loop = asyncio.get_event_loop()
 
-        async def _one(cid: int, name: str, overrides_json: str | None):
+        async def _one(group_rows: list[tuple[int, str, str | None, str | None]]):
             nonlocal processed, updated, failed
-            overrides = set(_safe_json(overrides_json, []))
-            if "number_of_employees" in overrides:
-                processed += 1
-                return
+            cid0, name0, _ov0, _es0 = group_rows[0]
             async with sem:
                 try:
-                    data = await loop.run_in_executor(None, research_employee_count, name)
+                    data = await loop.run_in_executor(None, research_employee_count, name0)
                 except Exception as e:
-                    log.warning("employee lookup crashed for %r: %s", name, e)
+                    log.warning("employee lookup crashed for %r: %s", name0, e)
                     data = {"number_of_employees": None, "error": str(e)}
 
             # Each worker gets its own session — SQLAlchemy sessions aren't
@@ -305,23 +347,27 @@ async def _enrich_employees_bg(job_id: int):
             try:
                 n = data.get("number_of_employees")
                 if isinstance(n, int) and n > 0:
-                    c = inner.query(Company).filter(Company.id == cid).first()
-                    if c and "number_of_employees" not in set(_safe_json(c.manual_overrides, [])):
-                        c.number_of_employees = n
-                        if data.get("employee_size") and not c.employee_size:
-                            c.employee_size = data["employee_size"]
-                        c.last_updated = datetime.now(timezone.utc).isoformat()
-                        inner.commit()
-                        updated += 1
+                    group_updates = 0
+                    for cid, _name, _ov, _es in group_rows:
+                        c = inner.query(Company).filter(Company.id == cid).first()
+                        if c and "number_of_employees" not in set(_safe_json(c.manual_overrides, [])):
+                            if not c.number_of_employees:
+                                c.number_of_employees = n
+                                group_updates += 1
+                            if data.get("employee_size") and not c.employee_size:
+                                c.employee_size = data["employee_size"]
+                            c.last_updated = datetime.now(timezone.utc).isoformat()
+                    inner.commit()
+                    updated += group_updates
                 else:
-                    failed += 1
+                    failed += len(group_rows)
             except Exception as e:
-                log.warning("commit failed for company %s: %s", cid, e)
-                failed += 1
+                log.warning("commit failed for company %s: %s", cid0, e)
+                failed += len(group_rows)
             finally:
                 inner.close()
 
-            processed += 1
+            processed += len(group_rows)
             # Heartbeat every 5 rows (and always on the last one).
             if processed % 5 == 0 or processed == total:
                 hb = SessionLocal()
@@ -333,7 +379,7 @@ async def _enrich_employees_bg(job_id: int):
                 finally:
                     hb.close()
 
-        await asyncio.gather(*(_one(cid, name, ov) for cid, name, ov in targets))
+        await asyncio.gather(*(_one(group) for group in dedup_targets))
 
         _mark(db, "complete", {
             "processed": processed, "total": total,
