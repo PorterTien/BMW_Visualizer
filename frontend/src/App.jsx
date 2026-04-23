@@ -7,7 +7,8 @@ import PartnershipNetwork from './components/PartnershipNetwork'
 import ResearchPanel from './components/ResearchPanel'
 import WatchlistPanel from './components/WatchlistPanel'
 import CompanyDetailPage from './components/CompanyDetailPage'
-import { getSeedStatus, triggerSeed, getWatchlistDigest, getCompanies, getCompaniesMap, getCompaniesNetwork, getPartnershipGraph } from './api/client'
+import { getSeedStatus, triggerSeed, getWatchlistDigest, getCompanies, getCompaniesMap, getCompaniesNetwork, getPartnershipGraph, setAuthToken } from './api/client'
+import { supabase } from './lib/supabase'
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('watchlist')
@@ -17,7 +18,21 @@ export default function App() {
   const [seedBanner, setSeedBanner] = useState(false)
   const [detailCompanyId, setDetailCompanyId] = useState(null)
   const [dataImportOpen, setDataImportOpen] = useState(false)
+  const [session, setSession] = useState(null)
   const seedPollRef = useRef(null)
+
+  // Sync Supabase session → auth token for watchlist API calls
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session: s } }) => {
+      setSession(s)
+      setAuthToken(s?.access_token ?? null)
+    })
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
+      setSession(s)
+      setAuthToken(s?.access_token ?? null)
+    })
+    return () => subscription.unsubscribe()
+  }, [])
 
   // Prefetch heavy list endpoints into the module-level cache on startup
   useEffect(() => {
@@ -98,6 +113,7 @@ export default function App() {
         setActiveTab={(tab) => { setDetailCompanyId(null); setActiveTab(tab) }}
         watchlistBreaking={watchlistBreaking}
         onOpenDataImport={() => setDataImportOpen(true)}
+        user={session?.user ?? null}
       />
 
       {/* Seeding banner */}
@@ -130,7 +146,7 @@ export default function App() {
           {activeTab === 'table' && (
             <CompanyTable filters={filters} onOpenCompany={handleOpenCompanyPage} />
           )}
-          {activeTab === 'watchlist' && <WatchlistPanel onOpenCompany={handleOpenCompanyPage} />}
+          {activeTab === 'watchlist' && <WatchlistPanel onOpenCompany={handleOpenCompanyPage} session={session} />}
           {activeTab === 'network' && (
             <PartnershipNetwork onSelectCompany={handleOpenCompanyPage} />
           )}

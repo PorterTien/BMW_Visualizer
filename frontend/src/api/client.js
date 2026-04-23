@@ -11,6 +11,17 @@ function cached(key, fetcher) {
 }
 export function bustCache(key) { _cache.delete(key) }
 
+// Auth token — set on Supabase session changes
+let _authToken = null
+export function setAuthToken(token) { _authToken = token }
+
+// Watchlist API instance that attaches the auth token on every request
+const watchlistApi = axios.create({ baseURL: '/api' })
+watchlistApi.interceptors.request.use((config) => {
+  if (_authToken) config.headers['Authorization'] = `Bearer ${_authToken}`
+  return config
+})
+
 // Companies
 export const getCompanies = (params) => {
   // Only cache the full 2000-record list used by the table and sidebar.
@@ -83,13 +94,13 @@ export const uploadPartnerships = (file) => {
 export const getJob = (id) => api.get(`/jobs/${id}`)
 export const listJobs = () => api.get('/jobs')
 
-// Watchlist
-export const getWatchlist = () => api.get('/watchlist')
-export const addToWatchlist = (companyId) => api.post(`/watchlist/${companyId}`)
-export const removeFromWatchlist = (companyId) => api.delete(`/watchlist/${companyId}`)
-export const getWatchlistDigest = () => api.get('/watchlist/digest/latest')
-export const triggerWatchlistDigest = () => api.post('/watchlist/digest/run')
-export const triggerCompanyDigest = (companyId) => api.post(`/watchlist/digest/run/${companyId}`)
+// Watchlist — uses watchlistApi so the Bearer token is included
+export const getWatchlist = () => watchlistApi.get('/watchlist')
+export const addToWatchlist = (companyId) => watchlistApi.post(`/watchlist/${companyId}`)
+export const removeFromWatchlist = (companyId) => watchlistApi.delete(`/watchlist/${companyId}`)
+export const getWatchlistDigest = () => watchlistApi.get('/watchlist/digest/latest')
+export const triggerWatchlistDigest = () => watchlistApi.post('/watchlist/digest/run')
+export const triggerCompanyDigest = (companyId) => watchlistApi.post(`/watchlist/digest/run/${companyId}`)
 
 // Sync/Seed
 export const getSyncStatus = () => api.get('/sync/status')

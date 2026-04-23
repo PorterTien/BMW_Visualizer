@@ -219,7 +219,7 @@ function InfoRow({ label, value }) {
   )
 }
 
-export default function WatchlistPanel({ onOpenCompany }) {
+export default function WatchlistPanel({ onOpenCompany, session }) {
   const [watchlist, setWatchlist] = useState([])
   const [digests, setDigests] = useState([])
   const [loading, setLoading] = useState(true)
@@ -280,6 +280,21 @@ export default function WatchlistPanel({ onOpenCompany }) {
   useEffect(() => {
     loadData().finally(() => setLoading(false))
   }, [loadData])
+
+  // Re-fetch whenever the user logs in or out
+  useEffect(() => {
+    if (session === undefined) return   // still initializing
+    if (!session) {
+      // Logged out — clear everything immediately
+      setWatchlist([])
+      setDigests([])
+      setOrderedIds([])
+      setSelectedId(null)
+      return
+    }
+    // Logged in — reload
+    loadData()
+  }, [session, loadData])
 
   // Fetch full company detail when selection changes
   useEffect(() => {
