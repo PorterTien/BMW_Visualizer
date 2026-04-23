@@ -207,6 +207,148 @@ def partnership_graph(db: Session = Depends(get_db)):
     return _build_partnership_graph(db)
 
 
+@router.post("/partnerships/enrich-employees")
+async def enrich_network_employees(request: Request, db: Session = Depends(get_db)):
+    """Background job: look up `number_of_employees` for every company that
+    participates in the partnership network (PartnershipMember OR legacy
+    announced_partners JSON) and is currently missing that value. Results are
+    written back to `companies.number_of_employees` and `employee_size`, and
+    progress is reported via a ResearchJob row whose `result` field is a live
+    JSON object shaped like {processed, total, updated, failed}."""
+    check_rate_limit(request, max_calls=2, window_secs=60)
+    ts = datetime.now(timezone.utc).isoformat()
+    job = ResearchJob(
+        job_type="employee_enrichment",
+        status="pending",
+        target="partnership_network",
+        created_at=ts,
+        updated_at=ts,
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    asyncio.create_task(_enrich_employees_bg(job.id)).add_done_callback(_log_task_error)
+    return {"job_id": job.id}
+
+
+async def _enrich_employees_bg(job_id: int):
+    """Fill in missing employee counts for every company in the partnership
+    network. Respects `manual_overrides` (never stomps a human edit)."""
+    from backend.ai_research import research_employee_count
+
+    CONCURRENCY = 4
+
+    def _mark(db, status: str, payload: dict) -> None:
+        j = db.query(ResearchJob).filter(ResearchJob.id == job_id).first()
+        if not j:
+            return
+        j.status = status
+        j.result = json.dumps(payload)
+        j.updated_at = datetime.now(timezone.utc).isoformat()
+        db.commit()
+
+    db = SessionLocal()
+    try:
+        _mark(db, "running", {"processed": 0, "total": 0, "updated": 0, "failed": 0})
+
+        # IDs that participate in the network (same rule as _build_partnership_graph)
+        member_ids = {
+            row[0] for row in db.query(PartnershipMember.company_id).distinct().all()
+        }
+        legacy_ids = {
+            row[0] for row in db.query(Company.id).filter(
+                Company.announced_partners.isnot(None),
+                func.trim(Company.announced_partners) != "",
+                func.trim(Company.announced_partners) != "[]",
+            ).all()
+        }
+        network_ids = member_ids | legacy_ids
+
+        # Only companies missing a real employee count.
+        targets = (
+            db.query(Company.id, Company.company_name, Company.manual_overrides)
+            .filter(Company.id.in_(network_ids))
+            .filter(
+                (Company.number_of_employees.is_(None))
+                | (Company.number_of_employees == 0)
+            )
+            .all()
+        )
+
+        total = len(targets)
+        if total == 0:
+            _mark(db, "complete", {"processed": 0, "total": 0, "updated": 0, "failed": 0})
+            return
+
+        processed = 0
+        updated = 0
+        failed = 0
+        sem = asyncio.Semaphore(CONCURRENCY)
+        loop = asyncio.get_event_loop()
+
+        async def _one(cid: int, name: str, overrides_json: str | None):
+            nonlocal processed, updated, failed
+            overrides = set(_safe_json(overrides_json, []))
+            if "number_of_employees" in overrides:
+                processed += 1
+                return
+            async with sem:
+                try:
+                    data = await loop.run_in_executor(None, research_employee_count, name)
+                except Exception as e:
+                    log.warning("employee lookup crashed for %r: %s", name, e)
+                    data = {"number_of_employees": None, "error": str(e)}
+
+            # Each worker gets its own session — SQLAlchemy sessions aren't
+            # safe to share across concurrent tasks.
+            inner = SessionLocal()
+            try:
+                n = data.get("number_of_employees")
+                if isinstance(n, int) and n > 0:
+                    c = inner.query(Company).filter(Company.id == cid).first()
+                    if c and "number_of_employees" not in set(_safe_json(c.manual_overrides, [])):
+                        c.number_of_employees = n
+                        if data.get("employee_size") and not c.employee_size:
+                            c.employee_size = data["employee_size"]
+                        c.last_updated = datetime.now(timezone.utc).isoformat()
+                        inner.commit()
+                        updated += 1
+                else:
+                    failed += 1
+            except Exception as e:
+                log.warning("commit failed for company %s: %s", cid, e)
+                failed += 1
+            finally:
+                inner.close()
+
+            processed += 1
+            # Heartbeat every 5 rows (and always on the last one).
+            if processed % 5 == 0 or processed == total:
+                hb = SessionLocal()
+                try:
+                    _mark(hb, "running", {
+                        "processed": processed, "total": total,
+                        "updated": updated, "failed": failed,
+                    })
+                finally:
+                    hb.close()
+
+        await asyncio.gather(*(_one(cid, name, ov) for cid, name, ov in targets))
+
+        _mark(db, "complete", {
+            "processed": processed, "total": total,
+            "updated": updated, "failed": failed,
+        })
+    except Exception as e:
+        log.error("employee enrichment job %d crashed: %s", job_id, e)
+        try:
+            _mark(db, "failed", {"error": str(e)})
+        except Exception:
+            pass
+    finally:
+        db.close()
+
+
 @router.post("/partnerships/enrich")
 async def enrich_network(request: Request, db: Session = Depends(get_db)):
     """Background job: AI-classify all unclassified company types and partnership types."""

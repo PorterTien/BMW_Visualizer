@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback, useMemo, memo } from 'react'
-import { getPartnershipGraph, getCompaniesNetwork, enrichPartnershipNetwork, getJob, bustCache } from '../api/client'
-import { forceCollide } from 'd3-force'
+import { getPartnershipGraph, getCompaniesNetwork, enrichPartnershipNetwork, enrichPartnershipEmployees, getJob, bustCache } from '../api/client'
+import { forceCollide, forceX, forceY } from 'd3-force'
 
 /* ── Constants ── */
 
@@ -229,6 +229,56 @@ function PartnershipNetwork({ onSelectCompany }) {
   }, [])
 
   useEffect(() => () => clearInterval(classifyPollRef.current), [])
+
+  // ── Employee-count enrichment ─────────────────────────────────────────
+  // Runs a background job that looks up missing number_of_employees for
+  // every company in the partnership network and commits it to the DB.
+  const [employeeState, setEmployeeState] = useState('idle') // idle | running | done | error
+  const [employeeProgress, setEmployeeProgress] = useState(null) // {processed,total,updated,failed}
+  const employeePollRef = useRef(null)
+
+  const handleEnrichEmployees = useCallback(async () => {
+    setEmployeeState('running')
+    setEmployeeProgress({ processed: 0, total: 0, updated: 0, failed: 0 })
+    try {
+      const { data } = await enrichPartnershipEmployees()
+      const jobId = data.job_id
+      let consecutiveErrors = 0
+      employeePollRef.current = setInterval(async () => {
+        try {
+          const { data: job } = await getJob(jobId)
+          consecutiveErrors = 0
+          if (job.result) {
+            try {
+              const p = typeof job.result === 'string' ? JSON.parse(job.result) : job.result
+              if (p && typeof p === 'object') setEmployeeProgress(p)
+            } catch {}
+          }
+          if (job.status === 'complete') {
+            clearInterval(employeePollRef.current)
+            setEmployeeState('done')
+            bustCache('partnerships:graph')
+            getPartnershipGraph()
+              .then(({ data: g }) => setGraphData(g))
+              .catch(() => {})
+          } else if (job.status === 'failed') {
+            clearInterval(employeePollRef.current)
+            setEmployeeState('error')
+          }
+        } catch (_) {
+          consecutiveErrors += 1
+          if (consecutiveErrors >= 5) {
+            clearInterval(employeePollRef.current)
+            setEmployeeState('error')
+          }
+        }
+      }, 3000)
+    } catch (_) {
+      setEmployeeState('error')
+    }
+  }, [])
+
+  useEffect(() => () => clearInterval(employeePollRef.current), [])
   useEffect(() => () => { if (rafRef.current) cancelAnimationFrame(rafRef.current) }, [])
 
   // Lazy-load react-force-graph-2d
@@ -691,17 +741,46 @@ function PartnershipNetwork({ onSelectCompany }) {
   // positions). We fire zoomToFit several times as the simulation settles so
   // the viewport tracks the matches instead of snapping once before forces
   // have resolved. When a search query is active we pass a predicate so the
-  // camera frames just the matched nodes rather than the whole neighborhood.
+  // camera frames just the matched nodes rather than the whole neighborhood,
+  // AND we tighten the layout (pull matches toward origin + shorten their
+  // connections) so the results visibly cluster instead of living on opposite
+  // ends of a sprawling network.
   useEffect(() => {
+    const fg = fgRef.current
+    if (!fg) return
     fitDoneRef.current = false
     displayGraphRef.current.nodes.forEach(n => { n.fx = undefined; n.fy = undefined })
-    fgRef.current?.d3ReheatSimulation?.()
+
+    // Clustering forces — only active while a search is in flight. When the
+    // query is cleared we null them out so the default layout returns.
+    const matchStrength = (n) => (searchMatchIds && searchMatchIds.has(n.id) ? 0.25 : 0)
+    fg.d3Force('searchX', searchMatchIds ? forceX(0).strength(matchStrength) : null)
+    fg.d3Force('searchY', searchMatchIds ? forceY(0).strength(matchStrength) : null)
+
+    // Shorten link distance for connections between matched nodes so the
+    // visible subgraph packs tighter. Non-match links keep the default.
+    const linkForce = fg.d3Force('link')
+    if (linkForce) {
+      linkForce.distance((link) => {
+        if (!searchMatchIds) return 220
+        const s = typeof link.source === 'object' ? link.source.id : link.source
+        const t = typeof link.target === 'object' ? link.target.id : link.target
+        const sHit = searchMatchIds.has(s)
+        const tHit = searchMatchIds.has(t)
+        if (sHit && tHit) return 90    // match-to-match: pulled tight
+        if (sHit || tHit) return 140   // match-to-neighbor: moderate
+        return 220                     // background: unchanged
+      })
+    }
+
+    fg.d3ReheatSimulation?.()
+
     const predicate = searchMatchIds
       ? (node) => searchMatchIds.has(node.id)
       : undefined
     const padding = searchMatchIds ? 120 : 60
-    const timers = [300, 900, 1600].map((ms) =>
-      setTimeout(() => fgRef.current?.zoomToFit(500, padding, predicate), ms)
+    const timers = [300, 900, 1600, 2400].map((ms) =>
+      setTimeout(() => fg.zoomToFit(500, padding, predicate), ms)
     )
     return () => timers.forEach(clearTimeout)
   }, [filteredGraph, searchMatchIds])
@@ -1123,6 +1202,36 @@ function PartnershipNetwork({ onSelectCompany }) {
               <>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
                 Classify All
+              </>
+            )}
+          </button>
+
+          {/* Enrich employee counts button */}
+          <button
+            onClick={employeeState === 'running' ? undefined : handleEnrichEmployees}
+            disabled={employeeState === 'running'}
+            title="Look up and commit employee counts for every company in the partnership network"
+            className={`text-xs px-3 py-1.5 rounded border transition-colors flex items-center gap-1.5 ${
+              employeeState === 'running'
+                ? (dark ? 'border-blue-600 text-blue-300 bg-blue-900/20' : 'border-blue-400 text-blue-600 bg-blue-50')
+              : employeeState === 'done'
+                ? (dark ? 'border-green-600 text-green-400' : 'border-green-500 text-green-600')
+              : employeeState === 'error'
+                ? (dark ? 'border-red-600 text-red-400' : 'border-red-400 text-red-600')
+              : (dark ? 'border-gray-600 text-gray-400 hover:border-blue-500' : 'border-bmw-border text-gray-600 hover:border-blue-400')
+            }`}
+          >
+            {employeeState === 'running' ? (
+              <>
+                <svg className="animate-spin" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
+                Employees {employeeProgress?.total ? `${employeeProgress.processed}/${employeeProgress.total}` : '…'}
+              </>
+            ) : employeeState === 'done' && employeeProgress ? (
+              <span>Employees ({employeeProgress.updated ?? 0} updated)</span>
+            ) : (
+              <>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                Fetch Employees
               </>
             )}
           </button>

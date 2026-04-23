@@ -433,6 +433,58 @@ def classify_partnerships_batch(partnerships_info: list[dict]) -> dict[str, dict
     return {}
 
 
+_EMPLOYEE_SYSTEM_PROMPT = """You extract the current total employee headcount for a company from web-search results.
+Return ONLY valid JSON with the shape:
+{"number_of_employees": integer or null, "employee_size": string or null, "as_of": string or null, "source_url": string or null, "confidence": "high"|"medium"|"low"}
+
+Rules:
+- number_of_employees is a single integer for total worldwide full-time-equivalent employees (or the best public approximation). Prefer the company's latest 10-K / annual report / LinkedIn headcount / Crunchbase.
+- If only a range is available (e.g. LinkedIn "201-500"), set number_of_employees to the midpoint (rounded) AND set employee_size to the original range string.
+- If the snippets mention multiple companies, pick the one that clearly matches the target name; if you can't disambiguate, return nulls with confidence "low".
+- as_of: the year or YYYY-MM the figure applies to, if stated. Otherwise null.
+- source_url: a single best URL from the search results (must be one of the URLs actually present in the snippets). Otherwise null.
+- Never fabricate numbers. When in doubt, return nulls."""
+
+
+def research_employee_count(company_name: str) -> dict:
+    """Targeted lookup of a single company's headcount.
+
+    Uses one focused web search + one Claude JSON synthesis, which is ~10x
+    cheaper than the full :func:`research_company` pipeline. Returns a dict
+    with at least ``number_of_employees`` (int|None). Safe to call on
+    failure — never raises."""
+    query = (
+        f'"{company_name}" total number of employees headcount '
+        f"(site:linkedin.com OR annual report OR 10-K OR crunchbase) 2024 2025"
+    )
+    try:
+        snippets = perplexity_search(query)
+    except Exception as e:
+        log.warning("Employee search failed for %r: %s", company_name, e)
+        return {"number_of_employees": None, "error": str(e)}
+
+    if not snippets or snippets.startswith("Search failed"):
+        return {"number_of_employees": None, "error": "no_results"}
+
+    user_msg = (
+        f"Target company: {company_name}\n\n"
+        f"Search results:\n{snippets[:8000]}"
+    )
+    try:
+        data = _claude_json(_EMPLOYEE_SYSTEM_PROMPT, user_msg)
+        if not isinstance(data, dict):
+            return {"number_of_employees": None, "error": "bad_shape"}
+        n = data.get("number_of_employees")
+        if isinstance(n, (int, float)) and n > 0:
+            data["number_of_employees"] = int(n)
+        else:
+            data["number_of_employees"] = None
+        return data
+    except Exception as e:
+        log.warning("Claude employee parse failed for %r: %s", company_name, e)
+        return {"number_of_employees": None, "error": str(e)}
+
+
 def extract_from_document(text: str, filename: str) -> dict:
     """Extract companies, news, and proceedings from document text."""
     user_msg = f"Filename: {filename}\n\nDocument text:\n{text[:40000]}"

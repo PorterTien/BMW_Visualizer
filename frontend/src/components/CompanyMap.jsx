@@ -150,7 +150,16 @@ function Legend({ hoveredType, pinnedType, onHoverType, onPinType }) {
         onClick={() => setCollapsed(!collapsed)}
         className="flex items-center justify-between w-full px-3 py-2 font-semibold text-[text-bmw-text-primary] hover:bg-white/80"
       >
-        <span>Company Type{pinnedType && <span className="ml-1 text-[10px] font-normal text-bmw-blue">📌 {pinnedType}</span>}</span>
+        <span className="flex items-center gap-1">
+          <span>Company Type</span>
+          {/* Keep icon slot fixed so clicking pin never changes legend width */}
+          <span
+            className={`text-[10px] w-3 inline-flex justify-center ${pinnedType ? 'text-bmw-blue' : 'text-transparent'}`}
+            aria-hidden="true"
+          >
+            📌
+          </span>
+        </span>
         <span className="ml-4 text-gray-400">{collapsed ? '▲' : '▼'}</span>
       </button>
       {!collapsed && (

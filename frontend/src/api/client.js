@@ -50,6 +50,10 @@ export const enrichPartnershipNetwork = () => {
   bustCache('partnerships:graph')
   return api.post('/partnerships/enrich')
 }
+export const enrichPartnershipEmployees = () => {
+  bustCache('partnerships:graph')
+  return api.post('/partnerships/enrich-employees')
+}
 
 // Facilities & Metrics
 export const getCompanyFacilities = (id) => api.get(`/companies/${id}/facilities`)
