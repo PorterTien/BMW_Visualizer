@@ -1,7 +1,38 @@
-import React, { useState, useRef } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import { uploadCSV, uploadPartnerships } from '../api/client'
 
-function DropZone({ label, accept, onUpload, uploading }) {
+function useUploadProgress(uploading) {
+  const [progress, setProgress] = useState({ pct: 0, label: 'Preparing…' })
+  const timerRef = useRef(null)
+
+  useEffect(() => {
+    if (!uploading) {
+      setProgress({ pct: 0, label: 'Preparing…' })
+      clearInterval(timerRef.current)
+      return
+    }
+    const steps = [
+      { pct: 10, label: 'Reading file…' },
+      { pct: 25, label: 'Detecting format…' },
+      { pct: 40, label: 'Loading existing data…' },
+      { pct: 60, label: 'Importing companies…' },
+      { pct: 75, label: 'Linking partnerships…' },
+      { pct: 90, label: 'Saving to database…' },
+      { pct: 96, label: 'Almost done…' },
+    ]
+    let i = 0
+    setProgress(steps[0])
+    timerRef.current = setInterval(() => {
+      i = Math.min(i + 1, steps.length - 1)
+      setProgress(steps[i])
+    }, 800)
+    return () => clearInterval(timerRef.current)
+  }, [uploading])
+
+  return progress
+}
+
+function DropZone({ label, accept, onUpload, uploading, progress }) {
   const inputRef = useRef()
   const [dragging, setDragging] = useState(false)
 
@@ -10,25 +41,43 @@ function DropZone({ label, accept, onUpload, uploading }) {
   }
 
   return (
-    <div
-      onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
-      onDragLeave={() => setDragging(false)}
-      onDrop={(e) => {
-        e.preventDefault()
-        setDragging(false)
-        handleFile(e.dataTransfer.files[0])
-      }}
-      onClick={() => inputRef.current?.click()}
-      className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
-        dragging ? 'border-bmw-blue bg-blue-50' : 'border-bmw-border hover:border-bmw-blue'
-      }`}
-    >
-      <input ref={inputRef} type="file" accept={accept} className="hidden"
-        onChange={(e) => handleFile(e.target.files[0])} />
-      <div className="text-2xl mb-2">↑</div>
-      <div className="text-sm font-medium text-gray-700">{label}</div>
-      <div className="text-xs text-gray-400 mt-1">Click or drag & drop</div>
-      {uploading && <div className="mt-2 text-xs text-bmw-blue animate-pulse">Uploading…</div>}
+    <div>
+      <div
+        onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => {
+          e.preventDefault()
+          setDragging(false)
+          handleFile(e.dataTransfer.files[0])
+        }}
+        onClick={() => !uploading && inputRef.current?.click()}
+        className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
+          uploading ? 'border-bmw-blue bg-blue-50 cursor-not-allowed' :
+          dragging ? 'border-bmw-blue bg-blue-50 cursor-pointer' : 'border-bmw-border hover:border-bmw-blue cursor-pointer'
+        }`}
+      >
+        <input ref={inputRef} type="file" accept={accept} className="hidden"
+          onChange={(e) => handleFile(e.target.files[0])} />
+        <div className="text-2xl mb-2">{uploading ? '⏳' : '↑'}</div>
+        <div className="text-sm font-medium text-gray-700">{label}</div>
+        <div className="text-xs text-gray-400 mt-1">
+          {uploading ? progress?.label || 'Uploading…' : 'Click or drag & drop'}
+        </div>
+      </div>
+      {/* Progress bar */}
+      {uploading && (
+        <div className="mt-2 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+          <div
+            className="h-full bg-bmw-blue rounded-full transition-all duration-300"
+            style={{ width: `${progress?.pct ?? 0}%` }}
+          />
+        </div>
+      )}
+      {uploading && (
+        <p className="text-xs text-bmw-blue text-center mt-1 animate-pulse">
+          {progress?.label || 'Uploading…'}
+        </p>
+      )}
     </div>
   )
 }
@@ -59,9 +108,11 @@ function ResultBanner({ result, onDismiss }) {
 export default function ResearchPanel() {
   const [csvUploading, setCsvUploading] = useState(false)
   const [csvResult, setCsvResult] = useState(null)
+  const csvProgress = useUploadProgress(csvUploading)
 
   const [pbUploading, setPbUploading] = useState(false)
   const [pbResult, setPbResult] = useState(null)
+  const pbProgress = useUploadProgress(pbUploading)
 
   async function handleCsvUpload(file) {
     setCsvUploading(true)
@@ -100,7 +151,7 @@ export default function ResearchPanel() {
         <div className="bg-white rounded-xl border border-[#DDE4EA] p-6">
           <h3 className="font-semibold text-[text-bmw-text-primary] mb-1">Companies Spreadsheet</h3>
           <p className="text-xs text-gray-500 mb-4">Import a CSV or XLSX with company records. New companies are added; existing ones are updated.</p>
-          <DropZone label="CSV or XLSX file" accept=".csv,.xlsx" onUpload={handleCsvUpload} uploading={csvUploading} />
+          <DropZone label="CSV or XLSX file" accept=".csv,.xlsx" onUpload={handleCsvUpload} uploading={csvUploading} progress={csvProgress} />
           <ResultBanner result={csvResult} onDismiss={() => setCsvResult(null)} />
         </div>
 
@@ -116,7 +167,7 @@ export default function ResearchPanel() {
             <span>· Crunchbase — Organizations</span>
             <span>· Crunchbase — Funding Rounds</span>
           </div>
-          <DropZone label=".csv or .xlsx export" accept=".csv,.xlsx" onUpload={handlePbUpload} uploading={pbUploading} />
+          <DropZone label=".csv or .xlsx export" accept=".csv,.xlsx" onUpload={handlePbUpload} uploading={pbUploading} progress={pbProgress} />
           <ResultBanner result={pbResult} onDismiss={() => setPbResult(null)} />
         </div>
 

@@ -191,8 +191,8 @@ export default function App() {
       {/* Data Import Modal */}
       {dataImportOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999]">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-3xl max-h-[90vh] overflow-auto">
-            <div className="flex items-center justify-between p-4 border-b border-gray-200">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 flex-shrink-0">
               <h2 className="text-lg font-semibold text-gray-800">Data Import</h2>
               <button
                 onClick={() => setDataImportOpen(false)}
@@ -201,7 +201,7 @@ export default function App() {
                 ✕
               </button>
             </div>
-            <div className="p-6">
+            <div className="overflow-y-auto flex-1">
               <ResearchPanel />
             </div>
           </div>
