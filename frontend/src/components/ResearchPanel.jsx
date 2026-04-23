@@ -139,7 +139,7 @@ export default function ResearchPanel() {
   }
 
   return (
-    <div className="flex-1 overflow-y-auto p-8 bg-bmw-gray-light">
+    <div className="flex-1 p-8 bg-bmw-gray-light overflow-hidden">
       <div className="max-w-3xl mx-auto space-y-6">
 
         <div>

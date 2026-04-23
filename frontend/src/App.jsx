@@ -173,7 +173,7 @@ export default function App() {
                 ✕
               </button>
             </div>
-            <div className="overflow-y-auto flex-1">
+            <div className="flex-1 overflow-hidden">
               <ResearchPanel />
             </div>
           </div>
