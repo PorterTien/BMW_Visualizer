@@ -502,6 +502,11 @@ def _split_investors(raw: str) -> list[str]:
 # ── Format detection ──────────────────────────────────────────────────────────
 
 def _detect_format(cols: set) -> str | None:
+    # Reject if any column name is suspiciously long — that means we're reading
+    # a metadata/search-criteria row, not a real header row.
+    if any(len(c) > 80 for c in cols):
+        return None
+
     lc = {c.lower() for c in cols}
     has = lambda *kw: any(any(k in c for c in lc) for k in kw)
     has_exact = lambda *kw: any(k in lc for k in kw)
@@ -558,15 +563,27 @@ def _import_pitchbook_companies(df: pd.DataFrame, db, ts: str) -> dict:
 
 # ── PitchBook deals ───────────────────────────────────────────────────────────
 
+def _extract_jv_partners(raw_name: str) -> list[str]:
+    """Extract partner names from 'Joint Venture (A / B)' or 'Company (A / B)' patterns."""
+    m = re.search(r'\(([^)]+)\)', raw_name)
+    if not m:
+        return []
+    inner = m.group(1)
+    if '/' not in inner:
+        return []
+    parts = [p.strip() for p in inner.split('/') if p.strip()]
+    return parts if len(parts) >= 2 else []
+
+
 def _import_pitchbook_deals(df: pd.DataFrame, db, ts: str) -> dict:
     companies_added = partnerships = 0
     individuals_grouped = 0
 
     for _, row in df.iterrows():
-        name = _col(row, 'Company Name', 'Company', 'Companies')
-        if not name:
+        raw_company_col = _col(row, 'Company Name', 'Company', 'Companies')
+        if not raw_company_col:
             continue
-        name = _clean_company_name(name)
+        name = _clean_company_name(raw_company_col)
 
         ptype = _map_deal_type(_col(row, 'Deal Type', 'Deal Type 2', 'Round'))
         date = _col(row, 'Deal Date', 'Close Date', 'Announced Date')
@@ -627,6 +644,22 @@ def _import_pitchbook_deals(df: pd.DataFrame, db, ts: str) -> dict:
                     _add_partner(company, investor, ptype, scale, date)
                     _create_partnership_record(db, company, investor, ptype, scale, date, 'pitchbook', ts)
                 partnerships += 1
+
+        # For JV deals: also extract partners from "Joint Venture (A / B)" company name
+        # and link them directly to each other (not just to the JV vehicle company).
+        deal_type_raw = _col(row, 'Deal Type', 'Deal Type 2', 'Round') or ''
+        if 'joint venture' in deal_type_raw.lower():
+            jv_partners = _extract_jv_partners(raw_company_col)
+            for i, partner_a in enumerate(jv_partners):
+                partner_a_clean = _clean_company_name(partner_a)
+                for partner_b in jv_partners[i + 1:]:
+                    partner_b_clean = _clean_company_name(partner_b)
+                    co_a = _upsert_company(db, partner_a_clean, {'data_source': 'pitchbook'}, ts)
+                    co_b = _upsert_company(db, partner_b_clean, {'data_source': 'pitchbook'}, ts)
+                    _add_partner(co_a, partner_b_clean, 'Joint Venture', scale, date)
+                    _add_partner(co_b, partner_a_clean, 'Joint Venture', scale, date)
+                    _create_partnership_record(db, co_a, partner_b_clean, 'Joint Venture', scale, date, 'pitchbook', ts)
+                    partnerships += 1
 
     log.info("PitchBook deals: %d individuals grouped under '%s'", individuals_grouped, INDEPENDENT_INVESTORS_NAME)
     return {
