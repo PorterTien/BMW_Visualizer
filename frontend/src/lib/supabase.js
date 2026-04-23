@@ -18,8 +18,7 @@ export const supabase = createClient(
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: true,
-      // pkce is more reliable than implicit for SPAs — no hash-parsing race conditions
-      flowType: 'pkce',
+      flowType: 'implicit',
     },
   }
 )
