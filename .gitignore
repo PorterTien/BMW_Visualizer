@@ -9,3 +9,5 @@ uploads/
 dist/
 frontend/node_modules/
 .DS_Store
+frontend/.env*
+!frontend/.env.example
