@@ -200,9 +200,10 @@ export default function CompanyTable({ filters, onOpenCompany }) {
 
   useEffect(() => {
     setLoading(true)
-    Promise.all([getCompanies(), getWatchlist()])
-      .then(([{ data: cos }, { data: wl }]) => {
-        setCompanies(cos)
+    Promise.all([getCompanies({ limit: 2000 }), getWatchlist()])
+      .then(([{ data: res }, { data: wl }]) => {
+        // API returns { items, total, ... } paginated shape
+        setCompanies(Array.isArray(res) ? res : res.items ?? [])
         setWatchedIds(new Set(wl.map((e) => e.company_id)))
       })
       .catch(console.error)

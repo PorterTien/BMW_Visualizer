@@ -262,6 +262,8 @@ def list_companies(
     segment: str | None = None,
     keyword: str | None = None,
     country: str | None = None,
+    limit: int = 200,
+    offset: int = 0,
     db: Session = Depends(get_db),
 ):
     pc = _announced_partners_count_expr(db)
@@ -281,8 +283,14 @@ def list_companies(
         q = q.filter(Company.keywords.like(f"%{keyword}%"))
     if country:
         q = q.filter(Company.company_hq_country.ilike(f"%{country}%"))
-    rows = q.order_by(Company.company_name).all()
-    return [_company_dict_list(c, int(pn or 0)) for c, pn in rows]
+    total = q.count()
+    rows = q.order_by(Company.company_name).offset(offset).limit(limit).all()
+    return {
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "items": [_company_dict_list(c, int(pn or 0)) for c, pn in rows],
+    }
 
 
 @router.get("/map")

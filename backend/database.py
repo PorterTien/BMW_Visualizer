@@ -10,14 +10,25 @@ elif _db_url.startswith("postgresql://") and "+psycopg" not in _db_url:
     _db_url = _db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
 
 connect_args = {}
-if _db_url.startswith("sqlite"):
+is_sqlite = _db_url.startswith("sqlite")
+
+if is_sqlite:
     connect_args = {"check_same_thread": False}
 
-engine = create_engine(
-    _db_url,
-    connect_args=connect_args,
-    echo=False,
-)
+if is_sqlite:
+    engine = create_engine(_db_url, connect_args=connect_args, echo=False)
+else:
+    # PostgreSQL: keep a pool of persistent connections so each request
+    # doesn't pay the ~100-200ms cost of a new TCP handshake to Supabase.
+    engine = create_engine(
+        _db_url,
+        pool_size=5,
+        max_overflow=10,
+        pool_timeout=30,
+        pool_recycle=300,      # recycle connections every 5 min
+        pool_pre_ping=True,    # test connection health before use
+        echo=False,
+    )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

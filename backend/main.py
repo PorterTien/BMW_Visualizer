@@ -9,6 +9,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
@@ -28,6 +29,9 @@ def _log_task_error(task: asyncio.Task) -> None:
 _seed_lock = asyncio.Lock()
 
 app = FastAPI(title="BMW Battery Intelligence API", version="1.0.0")
+
+# Compress all responses > 1KB — cuts JSON payload size by ~70%
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 _default_cors = "http://localhost:5173,http://127.0.0.1:5173"
 _cors_raw = os.getenv("CORS_ORIGINS", _default_cors).strip()
