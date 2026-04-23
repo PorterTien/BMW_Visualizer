@@ -576,73 +576,46 @@ def _extract_jv_partners(raw_name: str) -> list[str]:
 
 
 def _import_pitchbook_deals(df: pd.DataFrame, db, ts: str) -> dict:
-    # ── Preload existing data into memory (2 queries total instead of N) ────────
+    """
+    3-flush bulk import strategy:
+      1. Parse entire file → collect all company data + partnership edges in memory
+      2. Flush 1: bulk-add all new Company rows → get their IDs
+      3. Flush 2: bulk-add all Partnership rows → get their IDs
+      4. Flush 3: bulk-add all PartnershipMember rows
+    Network round-trips: 2 preload SELECTs + 3 flushes, regardless of file size.
+    """
+    valid_company_cols = set(Company.__table__.columns.keys())
+
+    # ── Pass 1: preload existing data ──────────────────────────────────────────
     company_cache: dict[str, Company] = {
         c.company_name.lower(): c for c in db.query(Company).all()
     }
-    # Existing partnerships as frozenset({id_a, id_b}) → set of types already stored
-    existing_pairs: dict[frozenset, set] = {}
+    existing_pairs: set[tuple] = set()
     for p in db.query(Partnership).all():
-        member_ids = frozenset(m.company_id for m in p.members)
-        existing_pairs.setdefault(member_ids, set()).add(p.partnership_type)
+        ids = tuple(sorted(m.company_id for m in p.members))
+        existing_pairs.add((ids, p.partnership_type))
 
-    def get_or_create_company(name: str, data: dict) -> Company:
+    companies_added_before = len(company_cache)
+
+    # ── Pass 2: parse the entire file in Python, no DB calls ──────────────────
+    # pending_companies: name → best-known data dict (merges across rows)
+    pending_companies: dict[str, dict] = {}
+    # pending_updates: existing companies that need field updates
+    pending_updates: list[tuple[Company, dict]] = []
+    # edges: list of (name_a, name_b, legacy_type, scale, date, deal_val)
+    edges: list[tuple] = []
+    individuals_grouped = 0
+
+    def touch_company(name: str, data: dict):
         key = name.lower()
         if key in company_cache:
-            co = company_cache[key]
-            valid = set(Company.__table__.columns.keys())
-            for k, v in data.items():
-                if v is not None and k in valid:
-                    setattr(co, k, v)
-            co.last_updated = ts
-            return co
-        valid = set(Company.__table__.columns.keys())
-        safe = {k: v for k, v in data.items() if v is not None and k in valid}
-        co = Company(company_name=name, last_updated=ts, **safe)
-        db.add(co)
-        company_cache[key] = co
-        return co
-
-    def make_partnership(co_a: Company, co_b: Company, legacy_type: str,
-                         scale: str | None, date: str | None, deal_val: float | None):
-        new_type = LEGACY_TO_NEW_TYPE.get(legacy_type, 'other')
-        # Flush so both companies have IDs assigned
-        if co_a.id is None or co_b.id is None:
-            db.flush()
-        pair = frozenset({co_a.id, co_b.id})
-        if new_type in existing_pairs.get(pair, set()):
-            return  # exact duplicate
-        existing_pairs.setdefault(pair, set()).add(new_type)
-        direction = DIRECTION_FOR_TYPE.get(new_type, 'bidirectional')
-        p = Partnership(
-            partnership_name=f"{co_a.company_name} — {co_b.company_name}",
-            partnership_type=new_type,
-            stage="active",
-            direction=direction,
-            date_announced=date,
-            deal_value=deal_val,
-            scope=scale,
-            source_name='pitchbook',
-            date_sourced=ts,
-            created_at=ts,
-            updated_at=ts,
-        )
-        db.add(p)
-        db.flush()
-        if direction == 'investor_to_investee':
-            db.add(PartnershipMember(partnership_id=p.id, company_id=co_b.id, role='investor'))
-            db.add(PartnershipMember(partnership_id=p.id, company_id=co_a.id, role='investee'))
-        elif direction == 'supplier_to_buyer':
-            db.add(PartnershipMember(partnership_id=p.id, company_id=co_b.id, role='supplier'))
-            db.add(PartnershipMember(partnership_id=p.id, company_id=co_a.id, role='buyer'))
+            pending_updates.append((company_cache[key], data))
         else:
-            db.add(PartnershipMember(partnership_id=p.id, company_id=co_a.id, role='partner'))
-            db.add(PartnershipMember(partnership_id=p.id, company_id=co_b.id, role='partner'))
-
-    # ── Main import loop ────────────────────────────────────────────────────────
-    companies_added_before = len(company_cache)
-    partnerships = 0
-    individuals_grouped = 0
+            existing = pending_companies.get(key, {})
+            # Merge: only fill in fields not yet seen
+            merged = {k: v for k, v in data.items() if v is not None}
+            existing.update({k: v for k, v in merged.items() if k not in existing})
+            pending_companies[key] = existing
 
     for _, row in df.iterrows():
         raw_company_col = _col(row, 'Company Name', 'Company', 'Companies')
@@ -658,64 +631,129 @@ def _import_pitchbook_deals(df: pd.DataFrame, db, ts: str) -> dict:
 
         hq_raw = _col(row, 'HQ Location', 'Headquarters Location')
         city, state, country = _parse_hq(hq_raw) if hq_raw else (None, None, None)
-        city   = _col(row, 'Company City', 'HQ City', 'City') or city
-        state  = _col(row, 'Company State/Province', 'HQ State', 'State') or state
+        city    = _col(row, 'Company City', 'HQ City', 'City') or city
+        state   = _col(row, 'Company State/Province', 'HQ State', 'State') or state
         country = _col(row, 'Company Country/Territory/Region', 'HQ Country', 'Country') or country
-
         website = _col(row, 'Company Website', 'Website', 'URL')
         if website:
             website = _clean_hyperlink(website)
-
         pb_industry = ' / '.join(filter(None, [
             _col(row, 'Primary PitchBook Industry Sector'),
             _col(row, 'Primary PitchBook Industry Group'),
             _col(row, 'Primary PitchBook Industry Code'),
         ]))
 
-        company = get_or_create_company(name, {
+        touch_company(name, {
             'company_hq_city': city, 'company_hq_state': state,
             'company_hq_country': country,
             'summary': _col(row, 'Description', 'Business Description', 'Company Description'),
             'company_website': website,
-            'number_of_employees': _parse_employees(_col(row, 'Current Employees', 'Employees', 'Number of Employees')),
+            'number_of_employees': _parse_employees(
+                _col(row, 'Current Employees', 'Employees', 'Number of Employees')),
+            'last_fundraise_date': date,
             'data_source': 'pitchbook',
             'notes': pb_industry or None,
         })
-        if date and not company.last_fundraise_date:
-            company.last_fundraise_date = date
 
-        investors_raw = _col(row, 'Investors', 'Lead/Sole Investors', 'Lead Investors', 'Investor(s)', 'All Investors')
+        investors_raw = _col(row, 'Investors', 'Lead/Sole Investors', 'Lead Investors',
+                             'Investor(s)', 'All Investors')
         if investors_raw:
             for raw_investor in _split_investors(investors_raw):
                 is_individual, person_name = _is_individual_investor(raw_investor)
-                investor_name = INDEPENDENT_INVESTORS_NAME if is_individual else _clean_company_name(raw_investor)
+                inv_name = INDEPENDENT_INVESTORS_NAME if is_individual else _clean_company_name(raw_investor)
                 inv_scale = (f"{person_name}" + (f" — {scale}" if scale else "")) if is_individual else scale
                 if is_individual:
                     individuals_grouped += 1
-                investor_co = get_or_create_company(investor_name, {'data_source': 'pitchbook'})
-                _add_partner(company, investor_name, ptype, inv_scale, date)
-                make_partnership(company, investor_co, ptype, inv_scale, date, deal_val)
-                partnerships += 1
+                touch_company(inv_name, {'data_source': 'pitchbook'})
+                edges.append((name, inv_name, ptype, inv_scale, date, deal_val))
 
-        # JV name pattern: "Joint Venture (A / B)" → direct A↔B link
         if 'joint venture' in deal_type_raw.lower():
-            jv_partners = _extract_jv_partners(raw_company_col)
-            for i, pa in enumerate(jv_partners):
-                co_a = get_or_create_company(_clean_company_name(pa), {'data_source': 'pitchbook'})
-                for pb in jv_partners[i + 1:]:
-                    co_b = get_or_create_company(_clean_company_name(pb), {'data_source': 'pitchbook'})
-                    _add_partner(co_a, co_b.company_name, 'Joint Venture', scale, date)
-                    _add_partner(co_b, co_a.company_name, 'Joint Venture', scale, date)
-                    make_partnership(co_a, co_b, 'Joint Venture', scale, date, deal_val)
-                    partnerships += 1
+            jv = _extract_jv_partners(raw_company_col)
+            for i, pa in enumerate(jv):
+                pa_clean = _clean_company_name(pa)
+                touch_company(pa_clean, {'data_source': 'pitchbook'})
+                for pb in jv[i + 1:]:
+                    pb_clean = _clean_company_name(pb)
+                    touch_company(pb_clean, {'data_source': 'pitchbook'})
+                    edges.append((pa_clean, pb_clean, 'Joint Venture', scale, date, deal_val))
 
-    companies_added = sum(1 for c in company_cache.values() if c.id is None or
-                          c.company_name.lower() not in {k for k in company_cache
-                                                          if company_cache[k].id is not None})
+    # ── Flush 1: insert all new companies at once ──────────────────────────────
+    for key, data in pending_companies.items():
+        safe = {k: v for k, v in data.items() if v is not None and k in valid_company_cols}
+        co = Company(company_name=safe.pop('company_name', key), last_updated=ts, **safe)
+        db.add(co)
+        company_cache[key] = co
+
+    # Apply updates to existing companies
+    for co, data in pending_updates:
+        for k, v in data.items():
+            if v is not None and k in valid_company_cols and not getattr(co, k, None):
+                setattr(co, k, v)
+        co.last_updated = ts
+
+    db.flush()  # ← Flush 1: assigns IDs to all new Company rows
+
+    # ── Flush 2: insert all Partnership rows ───────────────────────────────────
+    partnership_objs: list[tuple[Partnership, str, str, str]] = []  # (p, id_a, id_b, direction)
+    partnerships = 0
+
+    for name_a, name_b, legacy_type, scale, date, deal_val in edges:
+        co_a = company_cache.get(name_a.lower())
+        co_b = company_cache.get(name_b.lower())
+        if not co_a or not co_b:
+            continue
+        new_type = LEGACY_TO_NEW_TYPE.get(legacy_type, 'other')
+        ids = tuple(sorted([co_a.id, co_b.id]))
+        if (ids, new_type) in existing_pairs:
+            continue
+        existing_pairs.add((ids, new_type))
+
+        # Update announced_partners on both companies
+        _add_partner(co_a, name_b, legacy_type, scale, date)
+        _add_partner(co_b, name_a, legacy_type, scale, date)
+
+        direction = DIRECTION_FOR_TYPE.get(new_type, 'bidirectional')
+        deal_value_f = None
+        if deal_val:
+            deal_value_f = float(deal_val)
+
+        p = Partnership(
+            partnership_name=f"{co_a.company_name} — {co_b.company_name}",
+            partnership_type=new_type,
+            stage="active",
+            direction=direction,
+            date_announced=date,
+            deal_value=deal_value_f,
+            scope=scale,
+            source_name='pitchbook',
+            date_sourced=ts,
+            created_at=ts,
+            updated_at=ts,
+        )
+        db.add(p)
+        partnership_objs.append((p, co_a.id, co_b.id, direction))
+        partnerships += 1
+
+    db.flush()  # ← Flush 2: assigns IDs to all new Partnership rows
+
+    # ── Flush 3: insert all PartnershipMember rows ─────────────────────────────
+    for p, id_a, id_b, direction in partnership_objs:
+        if direction == 'investor_to_investee':
+            db.add(PartnershipMember(partnership_id=p.id, company_id=id_b, role='investor'))
+            db.add(PartnershipMember(partnership_id=p.id, company_id=id_a, role='investee'))
+        elif direction == 'supplier_to_buyer':
+            db.add(PartnershipMember(partnership_id=p.id, company_id=id_b, role='supplier'))
+            db.add(PartnershipMember(partnership_id=p.id, company_id=id_a, role='buyer'))
+        else:
+            db.add(PartnershipMember(partnership_id=p.id, company_id=id_a, role='partner'))
+            db.add(PartnershipMember(partnership_id=p.id, company_id=id_b, role='partner'))
+
+    db.flush()  # ← Flush 3: insert all members
+
     companies_added = len(company_cache) - companies_added_before
     log.info("PitchBook deals: %d individuals grouped under '%s'", individuals_grouped, INDEPENDENT_INVESTORS_NAME)
     return {
-        'companies_added': companies_added, 'companies_updated': 0,
+        'companies_added': companies_added, 'companies_updated': len(pending_updates),
         'partnerships_added': partnerships, 'individuals_grouped': individuals_grouped,
     }
 
