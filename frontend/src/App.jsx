@@ -7,14 +7,13 @@ import PartnershipNetwork from './components/PartnershipNetwork'
 import ResearchPanel from './components/ResearchPanel'
 import WatchlistPanel from './components/WatchlistPanel'
 import CompanyDetailPage from './components/CompanyDetailPage'
-import LoginPage from './components/LoginPage'
 import { getSeedStatus, triggerSeed, getWatchlistDigest } from './api/client'
 import { supabase } from './lib/supabase'
 import { setAuthToken } from './api/client'
 
 export default function App() {
-  const [session, setSession] = useState(undefined) // undefined = loading, null = logged out
-  const [activeTab, setActiveTab] = useState('map')
+  const [session, setSession] = useState(null)
+  const [activeTab, setActiveTab] = useState('watchlist')
   const [filters, setFilters] = useState({ search: '', types: [], statuses: [], segments: [], countries: [] })
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [highlightCompany, setHighlightCompany] = useState(null)
@@ -101,23 +100,6 @@ export default function App() {
 
   const showSidebar = activeTab === 'map' || activeTab === 'table'
 
-  // Show loading spinner while checking auth
-  if (session === undefined) {
-    return (
-      <div className="flex items-center justify-center h-screen bg-bmw-navy">
-        <svg className="animate-spin w-8 h-8 text-bmw-blue" fill="none" viewBox="0 0 24 24">
-          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-        </svg>
-      </div>
-    )
-  }
-
-  // Show login page when not authenticated
-  if (!session) {
-    return <LoginPage />
-  }
-
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-white">
       <Navbar
@@ -160,7 +142,7 @@ export default function App() {
           {activeTab === 'table' && (
             <CompanyTable filters={filters} onOpenCompany={handleOpenCompanyPage} />
           )}
-          {activeTab === 'watchlist' && <WatchlistPanel onOpenCompany={handleOpenCompanyPage} />}
+          {activeTab === 'watchlist' && <WatchlistPanel onOpenCompany={handleOpenCompanyPage} user={session?.user} />}
 {activeTab === 'network' && (
             <PartnershipNetwork onSelectCompany={handleOpenCompanyPage} />
           )}
