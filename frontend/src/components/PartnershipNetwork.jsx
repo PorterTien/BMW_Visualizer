@@ -1211,35 +1211,37 @@ function PartnershipNetwork({ onSelectCompany }) {
             )}
           </button>
 
-          {/* Enrich employee counts button */}
-          <button
-            onClick={employeeState === 'running' ? undefined : handleEnrichEmployees}
-            disabled={employeeState === 'running'}
-            title="Look up and commit employee counts for every company in the partnership network"
-            className={`text-xs px-3 py-1.5 rounded border transition-colors flex items-center gap-1.5 ${
-              employeeState === 'running'
-                ? (dark ? 'border-blue-600 text-blue-300 bg-blue-900/20' : 'border-blue-400 text-blue-600 bg-blue-50')
-              : employeeState === 'done'
-                ? (dark ? 'border-green-600 text-green-400' : 'border-green-500 text-green-600')
-              : employeeState === 'error'
-                ? (dark ? 'border-red-600 text-red-400' : 'border-red-400 text-red-600')
-              : (dark ? 'border-gray-600 text-gray-400 hover:border-blue-500' : 'border-bmw-border text-gray-600 hover:border-blue-400')
-            }`}
-          >
-            {employeeState === 'running' ? (
-              <>
-                <svg className="animate-spin" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
-                Employees {employeeProgress?.total ? `${employeeProgress.processed}/${employeeProgress.total}` : '…'}
-              </>
-            ) : employeeState === 'done' && employeeProgress ? (
-              <span>Employees ({employeeProgress.updated ?? 0} updated)</span>
-            ) : (
-              <>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-                Fetch Employees
-              </>
-            )}
-          </button>
+          {/* Employee enrichment kept in backend/API, hidden in UI for now. */}
+          {false && (
+            <button
+              onClick={employeeState === 'running' ? undefined : handleEnrichEmployees}
+              disabled={employeeState === 'running'}
+              title="Look up and commit employee counts for every company in the partnership network"
+              className={`text-xs px-3 py-1.5 rounded border transition-colors flex items-center gap-1.5 ${
+                employeeState === 'running'
+                  ? (dark ? 'border-blue-600 text-blue-300 bg-blue-900/20' : 'border-blue-400 text-blue-600 bg-blue-50')
+                : employeeState === 'done'
+                  ? (dark ? 'border-green-600 text-green-400' : 'border-green-500 text-green-600')
+                : employeeState === 'error'
+                  ? (dark ? 'border-red-600 text-red-400' : 'border-red-400 text-red-600')
+                : (dark ? 'border-gray-600 text-gray-400 hover:border-blue-500' : 'border-bmw-border text-gray-600 hover:border-blue-400')
+              }`}
+            >
+              {employeeState === 'running' ? (
+                <>
+                  <svg className="animate-spin" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
+                  Employees {employeeProgress?.total ? `${employeeProgress.processed}/${employeeProgress.total}` : '…'}
+                </>
+              ) : employeeState === 'done' && employeeProgress ? (
+                <span>Employees ({employeeProgress.updated ?? 0} updated)</span>
+              ) : (
+                <>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                  Fetch Employees
+                </>
+              )}
+            </button>
+          )}
 
           <input
             type="text"

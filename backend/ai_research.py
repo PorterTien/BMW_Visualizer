@@ -5,8 +5,10 @@ import json
 import logging
 import re
 import time
+from urllib.parse import urlencode
 
 import anthropic
+import requests
 
 from backend.config import (
     ANTHROPIC_API_KEY,
@@ -29,7 +31,16 @@ def _get_anthropic():
 def perplexity_search(query: str, max_retries: int = 3) -> str:
     """Search the web using Tavily (preferred) or Claude web search (fallback)."""
     if TAVILY_API_KEY:
-        return _tavily_search(query, max_retries)
+        result = _tavily_search(query, max_retries)
+        # Some environments have Tavily key configured but network policy blocks
+        # outbound Tavily calls (e.g., proxy 403). In that case, transparently
+        # fallback to Claude web search so enrichment still works.
+        if result.startswith("Search failed:"):
+            try:
+                return _claude_web_search(query, max_retries)
+            except Exception:
+                return result
+        return result
     return _claude_web_search(query, max_retries)
 
 
@@ -453,6 +464,62 @@ def research_employee_count(company_name: str) -> dict:
     cheaper than the full :func:`research_company` pipeline. Returns a dict
     with at least ``number_of_employees`` (int|None). Safe to call on
     failure — never raises."""
+    def _wiki_employee_count(name: str) -> int | None:
+        """Fast no-key fallback via Wikipedia API."""
+        try:
+            base = "https://en.wikipedia.org/w/api.php"
+            search_params = {
+                "action": "query",
+                "list": "search",
+                "srsearch": f"{name} company",
+                "format": "json",
+                "utf8": 1,
+                "srlimit": 3,
+            }
+            r = requests.get(f"{base}?{urlencode(search_params)}", timeout=5)
+            r.raise_for_status()
+            hits = (r.json().get("query") or {}).get("search") or []
+            for hit in hits:
+                title = hit.get("title")
+                if not title:
+                    continue
+                extract_params = {
+                    "action": "query",
+                    "prop": "extracts",
+                    "exintro": 1,
+                    "explaintext": 1,
+                    "titles": title,
+                    "format": "json",
+                    "utf8": 1,
+                }
+                r2 = requests.get(f"{base}?{urlencode(extract_params)}", timeout=5)
+                r2.raise_for_status()
+                pages = ((r2.json().get("query") or {}).get("pages") or {}).values()
+                text = " ".join((p.get("extract") or "") for p in pages).lower()
+                if not text:
+                    continue
+                m = re.search(r"([0-9][0-9,]{2,})\s+(?:employees|staff)", text)
+                if not m:
+                    m = re.search(r"(?:employees|staff)[^0-9]{0,20}([0-9][0-9,]{2,})", text)
+                if m:
+                    n = int(m.group(1).replace(",", ""))
+                    if 10 <= n <= 2_000_000:
+                        return n
+        except Exception:
+            return None
+        return None
+
+    # No-key fast path first; this keeps enrichment working even when Tavily /
+    # Claude web-search egress is blocked by network policy.
+    wiki_n = _wiki_employee_count(company_name)
+    if wiki_n:
+        return {
+            "number_of_employees": wiki_n,
+            "employee_size": None,
+            "confidence": "medium",
+            "source_url": "https://en.wikipedia.org/",
+        }
+
     query = (
         f'"{company_name}" total number of employees headcount '
         f"(site:linkedin.com OR annual report OR 10-K OR crunchbase) 2024 2025"

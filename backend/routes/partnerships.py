@@ -375,11 +375,14 @@ async def _enrich_employees_bg(job_id: int):
 
         processed = len(prefetched_ids)
         failed = 0
+        no_results = 0
+        timed_out = 0
+        crashed = 0
         sem = asyncio.Semaphore(CONCURRENCY)
         loop = asyncio.get_event_loop()
 
         async def _one(group_rows: list[tuple[int, str, str | None, str | None]]):
-            nonlocal processed, updated, failed
+            nonlocal processed, updated, failed, no_results, timed_out, crashed
             cid0, name0, _ov0, _es0 = group_rows[0]
             async with sem:
                 try:
@@ -387,8 +390,12 @@ async def _enrich_employees_bg(job_id: int):
                         loop.run_in_executor(None, research_employee_count, name0),
                         timeout=12,
                     )
+                except asyncio.TimeoutError:
+                    timed_out += len(group_rows)
+                    data = {"number_of_employees": None, "error": "timeout"}
                 except Exception as e:
                     log.warning("employee lookup crashed for %r: %s", name0, e)
+                    crashed += len(group_rows)
                     data = {"number_of_employees": None, "error": str(e)}
 
             # Each worker gets its own session — SQLAlchemy sessions aren't
@@ -410,6 +417,8 @@ async def _enrich_employees_bg(job_id: int):
                     inner.commit()
                     updated += group_updates
                 else:
+                    if data.get("error") == "no_results":
+                        no_results += len(group_rows)
                     failed += len(group_rows)
             except Exception as e:
                 log.warning("commit failed for company %s: %s", cid0, e)
@@ -426,6 +435,9 @@ async def _enrich_employees_bg(job_id: int):
                     _mark(hb, "running", {
                         "processed": processed, "total": total,
                         "updated": updated, "failed": failed,
+                        "no_results": no_results,
+                        "timed_out": timed_out,
+                        "crashed": crashed,
                     })
                 finally:
                     hb.close()
@@ -435,6 +447,9 @@ async def _enrich_employees_bg(job_id: int):
         _mark(db, "complete", {
             "processed": processed, "total": total,
             "updated": updated, "failed": failed,
+            "no_results": no_results,
+            "timed_out": timed_out,
+            "crashed": crashed,
         })
     except Exception as e:
         log.error("employee enrichment job %d crashed: %s", job_id, e)
