@@ -616,19 +616,30 @@ export default function CompanyTable({ filters, onOpenCompany }) {
         </button>
 
         {(() => {
-          const windowSize = Math.min(3, totalPages)
-          const start = Math.min(Math.max(1, page - 1), totalPages - windowSize + 1)
-          return Array.from({ length: windowSize }, (_, i) => start + i).map((p) => (
-            <button
-              key={p}
-              onClick={() => setPage(p)}
-              className={`w-6 h-6 rounded text-center ${
-                page === p ? 'bg-bmw-blue text-white font-bold' : 'hover:bg-gray-200'
-              }`}
-            >
-              {p}
-            </button>
-          ))
+          // Always show page 1 and totalPages; sliding 3-button window in between
+          const winStart = Math.min(Math.max(2, page - 1), Math.max(2, totalPages - 2))
+          const winEnd = Math.min(winStart + 2, totalPages - 1)
+          const pages = [1]
+          if (winStart > 2) pages.push('…left')
+          for (let p = winStart; p <= winEnd; p++) pages.push(p)
+          if (winEnd < totalPages - 1) pages.push('…right')
+          if (totalPages > 1) pages.push(totalPages)
+
+          return pages.map((p) =>
+            typeof p === 'string' ? (
+              <span key={p} className="px-0.5 text-gray-400">…</span>
+            ) : (
+              <button
+                key={p}
+                onClick={() => setPage(p)}
+                className={`w-6 h-6 rounded text-center ${
+                  page === p ? 'bg-bmw-blue text-white font-bold' : 'hover:bg-gray-200'
+                }`}
+              >
+                {p}
+              </button>
+            )
+          )
         })()}
 
         <button
