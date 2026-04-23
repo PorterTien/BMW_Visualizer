@@ -616,26 +616,23 @@ export default function CompanyTable({ filters, onOpenCompany }) {
         </button>
 
         {(() => {
-          // Always show page 1 and totalPages; sliding 3-button window in between
-          const winStart = Math.min(Math.max(2, page - 1), Math.max(2, totalPages - 2))
-          const winEnd = Math.min(winStart + 2, totalPages - 1)
-          const pages = [1]
-          if (winStart > 2) pages.push('…left')
-          for (let p = winStart; p <= winEnd; p++) pages.push(p)
-          if (winEnd < totalPages - 1) pages.push('…right')
-          if (totalPages > 1) pages.push(totalPages)
-
-          return pages.map((p) =>
+          if (totalPages <= 5) {
+            return Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
+              <button key={p} onClick={() => setPage(p)}
+                className={`w-6 h-6 rounded text-center ${page === p ? 'bg-bmw-blue text-white font-bold' : 'hover:bg-gray-200'}`}>
+                {p}
+              </button>
+            ))
+          }
+          // Clamp center so window [c-1, c, c+1] always stays between 2 and totalPages-1,
+          // guaranteeing a gap on both sides → layout is always: 1 … X X X … last (7 items)
+          const c = Math.min(Math.max(page, 3), totalPages - 2)
+          return [1, '…l', c - 1, c, c + 1, '…r', totalPages].map((p) =>
             typeof p === 'string' ? (
               <span key={p} className="px-0.5 text-gray-400">…</span>
             ) : (
-              <button
-                key={p}
-                onClick={() => setPage(p)}
-                className={`w-6 h-6 rounded text-center ${
-                  page === p ? 'bg-bmw-blue text-white font-bold' : 'hover:bg-gray-200'
-                }`}
-              >
+              <button key={p} onClick={() => setPage(p)}
+                className={`w-6 h-6 rounded text-center ${page === p ? 'bg-bmw-blue text-white font-bold' : 'hover:bg-gray-200'}`}>
                 {p}
               </button>
             )
