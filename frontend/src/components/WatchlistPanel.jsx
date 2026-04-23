@@ -448,11 +448,11 @@ export default function WatchlistPanel({ onOpenCompany }) {
                       </button>
                       <button
                         onClick={(e) => { e.stopPropagation(); handleRemove(company.company_id) }}
-                        title="Remove from watchlist"
-                        className="text-gray-300 hover:text-red-500 transition-colors"
+                        title="Unstar company"
+                        className="text-gray-300 hover:text-yellow-500 transition-colors"
                       >
-                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+                        <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                          <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
                         </svg>
                       </button>
                     </div>
