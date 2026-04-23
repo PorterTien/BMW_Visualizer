@@ -25,13 +25,15 @@ export default function App() {
 
   // Auth: listen for Supabase session changes
   useEffect(() => {
-    // getSession() parses the URL hash immediately on load (implicit flow)
-    supabase.auth.getSession().then(({ data: { session: s } }) => {
+    // Subscribe first so we don't miss the INITIAL_SESSION event that fires
+    // when getSession() resolves the URL hash tokens after an OAuth redirect.
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
       setSession(s)
       setAuthToken(s?.access_token ?? null)
     })
-    // onAuthStateChange catches token refreshes and sign-out after initial load
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
+    // getSession() triggers INITIAL_SESSION → onAuthStateChange fires above.
+    // Also handles the case where the session is already in localStorage.
+    supabase.auth.getSession().then(({ data: { session: s } }) => {
       setSession(s)
       setAuthToken(s?.access_token ?? null)
     })

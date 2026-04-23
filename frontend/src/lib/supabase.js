@@ -14,11 +14,18 @@ export const supabase = createClient(
     auth: {
       persistSession: true,
       autoRefreshToken: true,
+      // detectSessionInUrl parses #access_token from the hash at client construction time.
+      // This must be true for implicit flow OAuth redirects to work in SPAs.
       detectSessionInUrl: true,
-      flowType: 'implicit',  // simpler for SPAs — tokens arrive in URL hash, no server callback needed
+      flowType: 'implicit',
     },
   }
 )
+
+// Eagerly parse the URL hash on module load so tokens are consumed before
+// any router or React lifecycle can strip the hash away.
+// getSession() is idempotent — safe to call multiple times.
+supabase.auth.getSession()
 
 export async function signInWithGoogle() {
   return supabase.auth.signInWithOAuth({
