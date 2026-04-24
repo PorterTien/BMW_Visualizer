@@ -152,7 +152,9 @@ export default function App() {
           {activeTab === 'network' && (
             <PartnershipNetwork onSelectCompany={handleOpenCompanyPage} />
           )}
-          {activeTab === 'ai-research' && <SectorResearch />}
+          <div className={activeTab === 'ai-research' ? 'flex-1 min-h-0 flex flex-col' : 'hidden'}>
+            <SectorResearch />
+          </div>
         </main>
       </div>
 
