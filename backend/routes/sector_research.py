@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from backend.ai_research import perplexity_search
+from backend.config import TAVILY_API_KEY
 from backend.database import SessionLocal, get_db
 from backend.models import Company, NewsHeadline, ResearchJob
 
@@ -158,54 +159,15 @@ CATEGORIES = {
 
 # ── AI prompts ─────────────────────────────────────────────────────────────────
 
-SECTOR_COMPANY_PROMPT = """You are a battery industry analyst for BMW's technology scouting team, focused on North America (US and Canada).
+SECTOR_COMPANY_PROMPT = """You are a battery industry analyst. Given web search results, list the top 10-15 companies in the specified battery sector in North America (US and Canada).
 
-Given web search results, identify the TOP 10-15 most relevant companies in the specified battery sector.
-Return ONLY a valid JSON array. No markdown fences, no other text.
+Return ONLY a JSON array — no markdown, no explanation. Each item:
+{"company_name": string, "company_hq_city": string or null, "company_hq_state": string or null, "company_type": string, "company_status": string, "company_website": string or null, "summary": string}
 
-For each company include:
-{
-  "company_name": string,
-  "company_hq_city": string or null,
-  "company_hq_state": string or null,
-  "company_hq_country": string (default "USA"),
-  "company_type": string (one of: start-up, cell supplier, materials supplier, EV OEM, testing partner, prototyping partner, recycler, equipment supplier, R&D, services, modeling/software, other),
-  "company_status": string (one of: Commercial, Pre-commercial/startup, Planned, Under Construction, Pilot Plant, Operational, Closed, Paused),
-  "company_focus": [string],
-  "keywords": [string] (pick from: solid-state, sodium-ion, lithium metal, anode, cathode, electrolyte, silicon, prelithiation, LLZO, lithium-sulfur, AI, simulation, LFP, anode-free, polymer, current collector, separator, sulfidic electrolyte, NMC, NCA, NCMA, dry electrode, formation, recycling, second-life),
-  "announced_partners": [{"partner_name": string, "type_of_partnership": string, "scale": string or null, "date": string or null}],
-  "number_of_employees": integer or null,
-  "total_funding_usd": number or null (millions USD),
-  "last_fundraise_date": string or null,
-  "company_website": string or null,
-  "summary": string (3-4 sentences: what they do, core technology, commercialization stage, relevance to BMW)
-}
+company_type: start-up | cell supplier | materials supplier | EV OEM | testing partner | recycler | equipment supplier | R&D | modeling/software | other
+company_status: Commercial | Pre-commercial/startup | Pilot Plant | Operational | Closed | Paused
 
-Include both large incumbents AND emerging startups. Focus on US and Canada."""
-
-
-SECTOR_NEWS_PROMPT = """You are a battery industry analyst for BMW focused on electric vehicle supply chain and cell technology.
-
-Given web search results, extract the TOP 10-15 most significant news articles from 2025 and 2026 relevant to EV professionals in R&D, cell supplier relationships, and battery cell production.
-
-Include: manufacturing site openings/pauses, acquisitions, research discoveries, technical milestones, partnership announcements.
-
-Return ONLY a valid JSON array. No markdown fences, no other text.
-
-Each article:
-{
-  "news_headline": string (clear, factual headline),
-  "category": string (one of: R&D Discovery, Start-up Announcement, Cell Supplier Announcement, Solid-State, Electric Vehicle OEM Announcement, Facility, Funding, Regulatory, Market),
-  "partners": [string] (company/institution names mentioned),
-  "news_source": string (publication name),
-  "date_of_article": string (YYYY-MM-DD or YYYY-MM or YYYY),
-  "location": string or null (City, State, Country),
-  "topics": [string] (2-5 relevant tags),
-  "url": string or null,
-  "summary": string (2-3 sentences: what happened and why it matters to battery professionals)
-}
-
-Focus on US and Canada. Sort by date newest first."""
+Include large incumbents AND emerging startups. Return ONLY the JSON array."""
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -263,20 +225,51 @@ def _extract_list(text: str, label: str) -> list:
     return []
 
 
+def _sector_search(query: str) -> str:
+    """Tavily search with fewer results to stay under the 10k TPM rate limit."""
+    if TAVILY_API_KEY:
+        from tavily import TavilyClient
+        client = TavilyClient(api_key=TAVILY_API_KEY)
+        resp = client.search(query=query, search_depth="basic", max_results=4, include_answer=False)
+        parts = []
+        for r in resp.get("results", []):
+            title = r.get("title", "")
+            url = r.get("url", "")
+            content = (r.get("content") or "")[:600]
+            if content:
+                parts.append(f"[{title}] ({url})\n{content}")
+        return "\n\n".join(parts) or f"No results for: {query}"
+    return perplexity_search(query)
+
+
 def _claude_list(system: str, user_msg: str, label: str) -> list:
-    """Call Claude and robustly extract a JSON array from its response."""
+    """Call Claude and robustly extract a JSON array from its response. Retries on 429."""
     import anthropic
     from backend.config import ANTHROPIC_API_KEY, CLAUDE_MODEL
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    msg = client.messages.create(
-        model=CLAUDE_MODEL,
-        max_tokens=8096,
-        system=system,
-        messages=[{"role": "user", "content": user_msg}],
-    )
-    raw = msg.content[0].text
-    log.info("%s: Claude responded with %d chars", label, len(raw))
-    return _extract_list(raw, label)
+
+    for attempt in range(3):
+        try:
+            msg = client.messages.create(
+                model=CLAUDE_MODEL,
+                max_tokens=4096,
+                system=system,
+                messages=[{"role": "user", "content": user_msg}],
+            )
+            raw = msg.content[0].text
+            log.info("%s: Claude responded with %d chars", label, len(raw))
+            return _extract_list(raw, label)
+        except anthropic.RateLimitError:
+            if attempt < 2:
+                wait = 35 * (attempt + 1)
+                log.warning("%s: rate limited — waiting %ds (attempt %d/3)", label, wait, attempt + 1)
+                time.sleep(wait)
+            else:
+                log.error("%s: rate limit exceeded after 3 attempts", label)
+                return []
+        except Exception as e:
+            log.error("%s: Claude call failed: %s", label, e)
+            return []
 
 
 # ── Background research task ──────────────────────────────────────────────────
@@ -291,7 +284,7 @@ def _run_sector_research(job_id: int, category: str):
         company_texts = []
         for q in config.get("company_queries", []):
             try:
-                text = perplexity_search(q)
+                text = _sector_search(q)
                 company_texts.append(f"Query: {q}\n\n{text}")
                 log.info("Company search OK: %r (%d chars)", q[:60], len(text))
             except Exception as e:
@@ -305,25 +298,7 @@ def _run_sector_research(job_id: int, category: str):
             companies = _claude_list(SECTOR_COMPANY_PROMPT, user_msg, f"companies/{category}")
             log.info("Sector %r: %d companies extracted", category, len(companies))
 
-        # ── News ──
-        news_texts = []
-        for q in config.get("news_queries", []):
-            try:
-                text = perplexity_search(q)
-                news_texts.append(f"Query: {q}\n\n{text}")
-                log.info("News search OK: %r (%d chars)", q[:60], len(text))
-            except Exception as e:
-                log.warning("News search failed for %r: %s", q, e)
-            time.sleep(1)
-
-        news = []
-        if news_texts:
-            combined = "\n\n---\n\n".join(news_texts)
-            user_msg = f"Sector: {category}\n\nSearch results:\n{combined}"
-            news = _claude_list(SECTOR_NEWS_PROMPT, user_msg, f"news/{category}")
-            log.info("Sector %r: %d news items extracted", category, len(news))
-
-        _update_job(db, job_id, "complete", {"companies": companies, "news": news})
+        _update_job(db, job_id, "complete", {"companies": companies, "news": []})
 
     except Exception as e:
         log.error("Sector research job %d failed: %s", job_id, e)

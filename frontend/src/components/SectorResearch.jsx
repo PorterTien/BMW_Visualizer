@@ -12,24 +12,23 @@ import {
 function UrlBadge({ url, verification }) {
   if (!url) return <span className="text-bmw-gray-dark text-xs">—</span>
   const v = verification[url]
-  if (!v) {
-    return (
-      <a href={url} target="_blank" rel="noopener noreferrer"
-        className="text-bmw-blue text-xs underline truncate max-w-[160px] inline-block align-middle">
-        {url.replace(/^https?:\/\//, '').slice(0, 40)}…
-      </a>
-    )
+  const shortUrl = url.replace(/^https?:\/\//, '').slice(0, 36) + '…'
+  const link = (
+    <a href={url} target="_blank" rel="noopener noreferrer"
+      className="text-bmw-blue text-xs underline truncate max-w-[140px]"
+      title={url}>
+      {shortUrl}
+    </a>
+  )
+  if (!v || (!v.valid && v.status_code !== 404)) {
+    return <span className="flex items-center gap-1 min-w-0">{link}</span>
   }
-  const color = v.valid ? 'text-bmw-green' : 'text-bmw-red'
-  const icon = v.valid ? '✓' : (v.status_code === 404 ? '404' : '✗')
   return (
     <span className="flex items-center gap-1 min-w-0">
-      <span className={`text-xs font-bold flex-shrink-0 ${color}`}>{icon}</span>
-      <a href={url} target="_blank" rel="noopener noreferrer"
-        className="text-bmw-blue text-xs underline truncate max-w-[140px]"
-        title={url}>
-        {url.replace(/^https?:\/\//, '').slice(0, 36)}…
-      </a>
+      <span className={`text-xs font-bold flex-shrink-0 ${v.valid ? 'text-bmw-green' : 'text-bmw-red'}`}>
+        {v.valid ? '✓' : '404'}
+      </span>
+      {link}
     </span>
   )
 }
@@ -304,7 +303,7 @@ export default function SectorResearch() {
   }
 
   const isRunning = jobStatus === 'pending' || jobStatus === 'running'
-  const hasResults = companies.length > 0 || news.length > 0
+  const hasResults = companies.length > 0
   const selectedCount = selectedCompanies.size
 
   // Collect all URLs for batch verify
@@ -415,42 +414,32 @@ export default function SectorResearch() {
 
             {/* ── Toolbar ── */}
             <div className="flex items-center justify-between gap-3 flex-wrap">
-              {/* Tab switcher */}
-              <div className="flex items-center gap-0 border border-bmw-border rounded overflow-hidden">
-                <button
-                  onClick={() => setActiveTab('companies')}
-                  className={`px-4 py-1.5 text-xs font-medium transition-colors ${
-                    activeTab === 'companies'
-                      ? 'bg-bmw-blue text-white'
-                      : 'text-bmw-text-secondary hover:bg-bmw-gray-light'
-                  }`}
-                >
-                  Companies ({companies.length})
-                </button>
-                <button
-                  onClick={() => setActiveTab('news')}
-                  className={`px-4 py-1.5 text-xs font-medium transition-colors ${
-                    activeTab === 'news'
-                      ? 'bg-bmw-blue text-white'
-                      : 'text-bmw-text-secondary hover:bg-bmw-gray-light'
-                  }`}
-                >
-                  News ({news.length})
-                </button>
-              </div>
+              <span className="text-sm font-semibold text-bmw-navy">
+                {companies.length} companies found
+              </span>
 
               {/* URL verification */}
               <div className="flex items-center gap-2">
                 {verifiedCount > 0 && (
-                  <span className="text-xs text-bmw-text-secondary">
-                    {verifiedCount}/{allUrls.length} URLs verified
+                  <span className="text-xs text-bmw-text-secondary flex items-center gap-1">
+                    {verifiedCount}/{allUrls.length} URLs checked
                     {' · '}
                     <span className="text-bmw-green">
-                      {Object.values(verification).filter(v => v.valid).length} valid
+                      {Object.values(verification).filter(v => v.valid).length} live
                     </span>
                     {' · '}
                     <span className="text-bmw-red">
-                      {Object.values(verification).filter(v => !v.valid).length} invalid
+                      {Object.values(verification).filter(v => v.status_code === 404).length} 404
+                    </span>
+                    {' · '}
+                    <span className="text-bmw-text-secondary flex items-center gap-0.5">
+                      {Object.values(verification).filter(v => !v.valid && v.status_code !== 404).length} timed out
+                      <span className="relative group cursor-default">
+                        <span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full border border-bmw-gray-dark text-bmw-gray-dark text-[9px] font-bold leading-none ml-0.5">i</span>
+                        <span className="absolute top-full left-1/2 -translate-x-1/2 mt-1.5 w-52 bg-bmw-navy text-white text-[10px] rounded px-2 py-1.5 leading-snug opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-[9999] shadow-lg">
+                          Not a broken link — the server blocked automated access. Open it manually in a browser.
+                        </span>
+                      </span>
                     </span>
                   </span>
                 )}
@@ -473,21 +462,13 @@ export default function SectorResearch() {
 
             {/* ── Table ── */}
             <div className="border border-bmw-border rounded-lg overflow-hidden shadow-light">
-              {activeTab === 'companies' ? (
-                companies.length > 0
-                  ? <CompaniesTable
-                      companies={companies}
-                      selected={selectedCompanies}
-                      onToggle={handleToggle}
-                      onSelectAll={handleSelectAll}
-                      verification={verification}
-                    />
-                  : <p className="text-sm text-bmw-text-secondary text-center py-8">No companies found</p>
-              ) : (
-                news.length > 0
-                  ? <NewsTable news={news} verification={verification} />
-                  : <p className="text-sm text-bmw-text-secondary text-center py-8">No news found</p>
-              )}
+              <CompaniesTable
+                companies={companies}
+                selected={selectedCompanies}
+                onToggle={handleToggle}
+                onSelectAll={handleSelectAll}
+                verification={verification}
+              />
             </div>
 
             {/* ── Approve bar (companies only) ── */}
