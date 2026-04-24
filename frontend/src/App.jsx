@@ -7,6 +7,7 @@ import PartnershipNetwork from './components/PartnershipNetwork'
 import ResearchPanel from './components/ResearchPanel'
 import WatchlistPanel from './components/WatchlistPanel'
 import CompanyDetailPage from './components/CompanyDetailPage'
+import SectorResearch from './components/SectorResearch'
 import { getSeedStatus, triggerSeed, getWatchlistDigest, getCompanies, getCompaniesMap, getCompaniesNetwork, getPartnershipGraph, setAuthToken } from './api/client'
 import { supabase } from './lib/supabase'
 
@@ -105,6 +106,7 @@ export default function App() {
   const handleCloseCompanyPage = useCallback(() => setDetailCompanyId(null), [])
 
   const showSidebar = activeTab === 'map' || activeTab === 'table'
+  const fullWidthTab = activeTab === 'ai-research'
 
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-white">
@@ -150,6 +152,7 @@ export default function App() {
           {activeTab === 'network' && (
             <PartnershipNetwork onSelectCompany={handleOpenCompanyPage} />
           )}
+          {activeTab === 'ai-research' && <SectorResearch />}
         </main>
       </div>
 

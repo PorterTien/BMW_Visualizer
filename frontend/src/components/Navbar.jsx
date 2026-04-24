@@ -6,6 +6,7 @@ const TABS = [
   { id: 'map', label: 'Company Map' },
   { id: 'table', label: 'Company Table' },
   { id: 'network', label: 'Partnership Network' },
+  { id: 'ai-research', label: 'AI Research' },
 ]
 
 export default function Navbar({ activeTab, setActiveTab, watchlistBreaking = 0, onOpenDataImport = () => {}, user = null }) {

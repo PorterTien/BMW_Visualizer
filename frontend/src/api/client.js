@@ -102,6 +102,14 @@ export const getWatchlistDigest = () => watchlistApi.get('/watchlist/digest/late
 export const triggerWatchlistDigest = () => watchlistApi.post('/watchlist/digest/run')
 export const triggerCompanyDigest = (companyId) => watchlistApi.post(`/watchlist/digest/run/${companyId}`)
 
+// Sector Research
+export const getSectorCategories = () => api.get('/sector-research/categories')
+export const runSectorResearch = (category) => api.post('/sector-research/run', { category })
+export const getSectorJob = (jobId) => api.get(`/sector-research/jobs/${jobId}`)
+export const verifySectorUrls = (urls) => api.post('/sector-research/verify-urls', { urls })
+export const approveSectorResearch = (companies, news) =>
+  api.post('/sector-research/approve', { companies, news })
+
 // Sync/Seed
 export const getSyncStatus = () => api.get('/sync/status')
 export const triggerSync = () => api.post('/sync/naatbatt')
