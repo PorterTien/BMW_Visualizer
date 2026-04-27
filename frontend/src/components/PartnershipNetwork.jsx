@@ -590,7 +590,14 @@ function PartnershipNetwork({ onSelectCompany }) {
 
   /* ── Filtered graph ── */
   const filteredGraph = useMemo(() => {
-    let links = [...graphData.links]
+    // Drop links whose source or target node doesn't exist — prevents
+    // react-force-graph from crashing with "node not found".
+    const nodeIds = new Set(graphData.nodes.map(n => n.id))
+    let links = graphData.links.filter(l => {
+      const s = typeof l.source === 'object' ? l.source.id : l.source
+      const t = typeof l.target === 'object' ? l.target.id : l.target
+      return nodeIds.has(s) && nodeIds.has(t)
+    })
 
     // Filter by partnership type
     if (filterTypes.length > 0) {
