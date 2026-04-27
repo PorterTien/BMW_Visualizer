@@ -877,6 +877,12 @@ def _build_partnership_graph(db: Session) -> dict:
         connected_ids.add(link["target"])
     nodes = [n for n in nodes if n["id"] in connected_ids]
 
+    # Drop links that reference a node not in the final nodes list
+    # (can happen when a partnership member company exists in the partnerships
+    # table but was filtered out above, e.g. bucket companies or aliased rows).
+    node_ids = {n["id"] for n in nodes}
+    links = [l for l in links if l["source"] in node_ids and l["target"] in node_ids]
+
     return {"nodes": nodes, "links": links}
 
 

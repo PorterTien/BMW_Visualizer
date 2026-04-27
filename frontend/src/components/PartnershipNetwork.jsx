@@ -714,6 +714,7 @@ function PartnershipNetwork({ onSelectCompany }) {
       metaNode,
     ]
 
+    const nodeIds = new Set(nodes.map(n => n.id))
     const seenLinkKeys = new Set()
     const links = filteredGraph.links
       .map(l => {
@@ -722,6 +723,7 @@ function PartnershipNetwork({ onSelectCompany }) {
         const ns = investorIds.has(s) ? INVESTOR_META_ID : s
         const nt = investorIds.has(t) ? INVESTOR_META_ID : t
         if (ns === nt) return null
+        if (!nodeIds.has(ns) || !nodeIds.has(nt)) return null
         const key = `${[ns, nt].sort().join('::')}::${l.type}`
         if (seenLinkKeys.has(key)) return null
         seenLinkKeys.add(key)
