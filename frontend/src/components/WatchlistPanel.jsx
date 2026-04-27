@@ -44,6 +44,7 @@ function ArticleThumbnail({ url }) {
   const [src, setSrc] = useState(thumbCache[url] ?? null)
   const [loaded, setLoaded] = useState(!!thumbCache[url])
   const [imgFailed, setImgFailed] = useState(false)
+  const [faviconFailed, setFaviconFailed] = useState(false)
   const favicon = url ? getFaviconUrl(url) : null
 
   useEffect(() => {
@@ -86,8 +87,8 @@ function ArticleThumbnail({ url }) {
   // Fallback: favicon in a box
   return (
     <div className="w-20 h-14 rounded flex-shrink-0 bg-gray-50 border border-gray-100 flex items-center justify-center">
-      {favicon ? (
-        <img src={favicon} alt="" className="w-6 h-6 object-contain opacity-50" />
+      {favicon && !faviconFailed ? (
+        <img src={favicon} alt="" className="w-6 h-6 object-contain opacity-50" onError={() => setFaviconFailed(true)} />
       ) : (
         <svg className="w-6 h-6 text-gray-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
           <path strokeLinecap="round" strokeLinejoin="round" d="M12 7.5h1.5m-1.5 3h1.5m-7.5 3h7.5m-7.5 3h7.5m3-9h3.375c.621 0 1.125.504 1.125 1.125V18a2.25 2.25 0 0 1-2.25 2.25M16.5 7.5V18a2.25 2.25 0 0 0 2.25 2.25M16.5 7.5V4.875c0-.621-.504-1.125-1.125-1.125H4.125C3.504 3.75 3 4.254 3 4.875V18a2.25 2.25 0 0 0 2.25 2.25h13.5M6 7.5h3v3H6v-3Z" />

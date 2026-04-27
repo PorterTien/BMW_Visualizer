@@ -85,6 +85,7 @@ export default function Navbar({ activeTab, setActiveTab, watchlistBreaking = 0,
                     alt=""
                     className="w-8 h-8 rounded-full object-cover border border-gray-200"
                     referrerPolicy="no-referrer"
+                    onError={(e) => { e.currentTarget.style.display = 'none' }}
                   />
                 ) : (
                   <div className="w-8 h-8 rounded-full bg-bmw-blue flex items-center justify-center text-white text-sm font-semibold">
