@@ -260,7 +260,7 @@ def _fix_company_facilities(db, dry_run: bool) -> int:
         .all()
     )
     for fac in facilities:
-        if not _is_us(fac.country, fac.state):
+        if not _is_north_america(fac.country, fac.state):
             continue
         new_lat, new_lng, changes = fix_us_coords(fac.lat, fac.lng)
         if not changes:
