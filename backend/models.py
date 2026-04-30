@@ -56,7 +56,6 @@ class Company(Base):
     linkedin_url = Column(Text)
     pitchbook_url = Column(Text)
     volta_member = Column(Integer, default=0)
-    volta_verified = Column(Integer, default=0)
     products = Column(Text)               # product list
     product_services_desc = Column(Text)  # product/services description
     battery_chemistry_flags = Column(Text)  # JSON obj of chemistry booleans
@@ -65,6 +64,7 @@ class Company(Base):
     gwh_capacity = Column(Text)           # JSON: {"2022": 60, "2023": 65, ...}
     plant_start_date = Column(Text)       # earliest plant start date
     last_updated = Column(Text)
+    last_researched = Column(Text)           # ISO timestamp of last AI research run
     data_source = Column(Text)
     manual_overrides = Column(Text)          # JSON list of field names manually set by user
 

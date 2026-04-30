@@ -74,7 +74,6 @@ def _company_dict(c: Company) -> dict:
         "linkedin_url": c.linkedin_url,
         "pitchbook_url": c.pitchbook_url,
         "volta_member": bool(c.volta_member),
-        "volta_verified": bool(c.volta_verified),
         "products": c.products,
         "product_services_desc": c.product_services_desc,
         "battery_chemistry_flags": _safe_json(c.battery_chemistry_flags, {}),
@@ -82,6 +81,7 @@ def _company_dict(c: Company) -> dict:
         "gwh_capacity": _safe_json(c.gwh_capacity, {}),
         "plant_start_date": c.plant_start_date,
         "last_updated": c.last_updated,
+        "last_researched": c.last_researched,
         "data_source": c.data_source,
         "manual_overrides": _safe_json(c.manual_overrides, []),
     }
@@ -123,11 +123,11 @@ _COMPANY_LIST_LOAD_ONLY = (
     Company.linkedin_url,
     Company.pitchbook_url,
     Company.volta_member,
-    Company.volta_verified,
     Company.products,
     Company.gwh_capacity,
     Company.plant_start_date,
     Company.last_updated,
+    Company.last_researched,
     Company.data_source,
 )
 
@@ -235,7 +235,6 @@ def _company_dict_list(c: Company, partner_count: int) -> dict:
         "linkedin_url": c.linkedin_url,
         "pitchbook_url": c.pitchbook_url,
         "volta_member": bool(c.volta_member),
-        "volta_verified": bool(c.volta_verified),
         "products": c.products,
         "product_services_desc": None,
         "battery_chemistry_flags": {},
@@ -243,6 +242,7 @@ def _company_dict_list(c: Company, partner_count: int) -> dict:
         "gwh_capacity": _safe_json(c.gwh_capacity, {}),
         "plant_start_date": c.plant_start_date,
         "last_updated": c.last_updated,
+        "last_researched": c.last_researched,
         "data_source": c.data_source,
     }
 
@@ -279,7 +279,10 @@ def list_companies(
     if country:
         q = q.filter(Company.company_hq_country.ilike(f"%{country}%"))
     total = q.count()
-    rows = q.order_by(Company.company_name).offset(offset).limit(limit).all()
+    q = q.order_by(Company.company_name).offset(offset)
+    if limit > 0:
+        q = q.limit(limit)
+    rows = q.all()
     return {
         "total": total,
         "offset": offset,
@@ -978,11 +981,13 @@ async def research_company_endpoint(req: ResearchRequest, request: Request, db: 
                             val = json.dumps(val)
                         setattr(existing, field, val)
                 existing.last_updated = ts
+                existing.last_researched = ts
                 existing.data_source = "ai_research"
             else:
                 company_data = {k: (json.dumps(v) if isinstance(v, (list, dict)) else v)
                                 for k, v in result.items() if k != "error"}
                 company_data["last_updated"] = ts
+                company_data["last_researched"] = ts
                 existing = Company(**company_data)
                 inner_db.add(existing)
             inner_db.commit()
@@ -1326,6 +1331,7 @@ async def bulk_research(req: BulkResearchRequest, request: Request, db: Session 
                         if val is not None and field not in ("company_name", "error") and field not in overrides:
                             setattr(company, field, json.dumps(val) if isinstance(val, (list, dict)) else val)
                     company.last_updated = ts
+                    company.last_researched = ts
                     company.data_source = "ai_research"
                     inner_db.commit()
 

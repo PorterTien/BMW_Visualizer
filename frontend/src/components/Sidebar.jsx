@@ -84,7 +84,7 @@ export default function Sidebar({ filters, setFilters, collapsed, setCollapsed, 
   const lowerNamesRef = useRef([])
 
   useEffect(() => {
-    getCompanies({ limit: 2000 })
+    getCompanies({ limit: 0 })
       .then(({ data }) => {
         const items = Array.isArray(data) ? data : data.items ?? []
         const names = items.map((c) => c.company_name).filter(Boolean)

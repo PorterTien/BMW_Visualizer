@@ -25,7 +25,7 @@ watchlistApi.interceptors.request.use((config) => {
 // Companies
 export const getCompanies = (params) => {
   // Only cache the full 2000-record list used by the table and sidebar.
-  if (params?.limit === 2000) return cached('companies:2000', () => api.get('/companies', { params }))
+  if (params?.limit === 0) return cached('companies:all', () => api.get('/companies', { params }))
   return api.get('/companies', { params })
 }
 export const getCompany = (id) => api.get(`/companies/${id}`)

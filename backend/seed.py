@@ -484,7 +484,6 @@ def import_bbd(db) -> dict:
             "pitchbook_url": _safe_str(row.get("pitchbook_url")),
             "summary": _safe_str(row.get("company_description")),
             "volta_member": 1 if _safe_str(row.get("volta_foundation_member")) == "True" else 0,
-            "volta_verified": 1 if _safe_str(row.get("volta_verified")) == "True" else 0,
             "funding_status": _safe_str(row.get("funding_status")),
             "employee_size": _safe_str(row.get("employee_size")),
             "company_hq_city": _safe_str(row.get("city")),
@@ -517,7 +516,6 @@ def import_bbd(db) -> dict:
                     setattr(existing, field, data[field])
             # Always set BBD-only fields
             existing.volta_member = data["volta_member"]
-            existing.volta_verified = data["volta_verified"]
             existing.supply_chain_flags = data["supply_chain_flags"]
             existing.battery_chemistry_flags = data["battery_chemistry_flags"]
             updated += 1

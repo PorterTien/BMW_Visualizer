@@ -100,7 +100,6 @@ def migrate_db():
         ("linkedin_url", "TEXT"),
         ("pitchbook_url", "TEXT"),
         ("volta_member", "INTEGER"),
-        ("volta_verified", "INTEGER"),
         ("products", "TEXT"),
         ("product_services_desc", "TEXT"),
         ("battery_chemistry_flags", "TEXT"),
@@ -108,6 +107,7 @@ def migrate_db():
         ("gwh_capacity", "TEXT"),
         ("plant_start_date", "TEXT"),
         ("data_source", "TEXT"),
+        ("last_researched", "TEXT"),
     ]
     dialect = engine.dialect.name
     with engine.connect() as conn:

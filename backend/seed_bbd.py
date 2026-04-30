@@ -124,7 +124,6 @@ def parse_bbd() -> list[dict]:
             "linkedin_url": _safe_str(row.get("linkedIn_url")),
             "pitchbook_url": _safe_str(row.get("pitchbook_url")),
             "volta_member": 1 if _is_true(row.get("volta_foundation_member")) else 0,
-            "volta_verified": 1 if _is_true(row.get("volta_verified")) else 0,
             "products": _safe_str(row.get("products")),
             "product_services_desc": _safe_str(row.get("product_services_description")),
             "company_type": company_type,
@@ -174,8 +173,6 @@ def import_bbd(db) -> dict:
             # Volta membership flags always update
             if data.get("volta_member"):
                 existing.volta_member = 1
-            if data.get("volta_verified"):
-                existing.volta_verified = 1
             # Enrich summary if empty
             if not existing.summary and data.get("summary"):
                 existing.summary = data["summary"]
@@ -204,7 +201,6 @@ def import_bbd(db) -> dict:
                 linkedin_url=data.get("linkedin_url"),
                 pitchbook_url=data.get("pitchbook_url"),
                 volta_member=data.get("volta_member", 0),
-                volta_verified=data.get("volta_verified", 0),
                 products=data.get("products"),
                 product_services_desc=data.get("product_services_desc"),
                 supply_chain_flags=data.get("supply_chain_flags"),

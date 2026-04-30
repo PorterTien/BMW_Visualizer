@@ -86,7 +86,7 @@ def _safe_json_list(val: str | None) -> list:
 _SKIP_MERGE_COLS = frozenset({"id", "company_name", "manual_overrides"})
 
 # Fields that store 0/1 flags — treat 0 as "no info" and let a 1 from the loser win.
-_FLAG_COLS = frozenset({"naatbatt_member", "volta_member", "volta_verified"})
+_FLAG_COLS = frozenset({"naatbatt_member", "volta_member"})
 
 
 def _retarget_foreign_keys(db: Session, winner_id: int, loser_id: int) -> None:

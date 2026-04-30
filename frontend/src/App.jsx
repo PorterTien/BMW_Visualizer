@@ -37,7 +37,7 @@ export default function App() {
 
   // Prefetch heavy list endpoints into the module-level cache on startup
   useEffect(() => {
-    getCompanies({ limit: 2000 })
+    getCompanies({ limit: 0 })
     getCompaniesMap()
     getCompaniesNetwork()
     getPartnershipGraph()

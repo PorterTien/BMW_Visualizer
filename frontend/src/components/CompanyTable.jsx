@@ -207,7 +207,7 @@ export default function CompanyTable({ filters, onOpenCompany }) {
 
   useEffect(() => {
     setLoading(true)
-    getCompanies({ limit: 2000 })
+    getCompanies({ limit: 0 })
       .then(({ data: res }) => {
         setCompanies(Array.isArray(res) ? res : res.items ?? [])
       })
