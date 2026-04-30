@@ -65,17 +65,19 @@ function SyncBadge({ syncStatus, syncing, onSyncNow }) {
     ? 'Never synced'
     : `Last synced ${age}`
 
+  const base = 'flex items-center gap-1.5 text-xs font-medium px-4 py-1.5 rounded whitespace-nowrap transition-colors'
+
   if (urgency === 'ok') {
     return (
       <div className="flex items-center gap-2">
-        <span className="text-[11px] text-gray-400 whitespace-nowrap">{label}</span>
+        <span className="text-xs text-gray-400 whitespace-nowrap">{label}</span>
         <button
           onClick={onSyncNow}
           title="Sync NAATBatt data now"
-          className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-bmw-blue border border-gray-200 hover:border-bmw-blue px-2 py-0.5 rounded transition-colors"
+          className={`${base} text-gray-500 border border-gray-200 hover:text-bmw-blue hover:border-bmw-blue`}
         >
           <SyncIcon spinning={false} />
-          <span>Sync</span>
+          <span>Sync Now</span>
         </button>
       </div>
     )
@@ -83,7 +85,7 @@ function SyncBadge({ syncStatus, syncing, onSyncNow }) {
 
   if (urgency === 'syncing') {
     return (
-      <div className="flex items-center gap-1.5 text-[11px] text-bmw-blue bg-blue-50 border border-blue-200 px-2.5 py-1 rounded-full">
+      <div className={`${base} text-bmw-blue bg-blue-50 border border-blue-200 cursor-default`}>
         <SyncIcon spinning={true} />
         <span>Syncing…</span>
       </div>
@@ -94,7 +96,7 @@ function SyncBadge({ syncStatus, syncing, onSyncNow }) {
     return (
       <button
         onClick={onSyncNow}
-        className="flex items-center gap-1.5 text-[11px] text-gray-500 hover:text-bmw-blue border border-gray-200 hover:border-bmw-blue px-2.5 py-1 rounded-full transition-colors"
+        className={`${base} text-gray-500 border border-gray-200 hover:text-bmw-blue hover:border-bmw-blue`}
       >
         <SyncIcon spinning={false} />
         <span>Sync Now</span>
@@ -107,14 +109,12 @@ function SyncBadge({ syncStatus, syncing, onSyncNow }) {
       <button
         onClick={onSyncNow}
         title={`Last synced ${age} — click to sync now`}
-        className="flex items-center gap-1.5 text-[11px] font-medium text-amber-700 bg-amber-50 border border-amber-300 hover:bg-amber-100 px-2.5 py-1 rounded-full transition-colors whitespace-nowrap"
+        className={`${base} text-amber-700 bg-amber-50 border border-amber-300 hover:bg-amber-100`}
       >
         <svg className="w-3 h-3 flex-shrink-0" viewBox="0 0 16 16" fill="currentColor">
           <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 4a.75.75 0 0 1 .75.75v3a.75.75 0 0 1-1.5 0v-3A.75.75 0 0 1 8 5zm0 6.5a.875.875 0 1 1 0-1.75.875.875 0 0 1 0 1.75z"/>
         </svg>
-        <span>{label}</span>
-        <span className="opacity-60">·</span>
-        <span>Sync Now</span>
+        <span>{label} · Sync Now</span>
       </button>
     )
   }
@@ -124,12 +124,10 @@ function SyncBadge({ syncStatus, syncing, onSyncNow }) {
     <button
       onClick={onSyncNow}
       title={`Last synced ${age} — overdue! Click to sync now`}
-      className="animate-throb flex items-center gap-1.5 text-[11px] font-semibold text-white bg-red-500 hover:bg-red-600 px-3 py-1 rounded-full whitespace-nowrap transition-colors"
+      className={`${base} animate-throb text-white bg-red-500 hover:bg-red-600`}
     >
       <SyncIcon spinning={false} />
-      <span className="animate-pulse-dim">{label}</span>
-      <span className="opacity-70">·</span>
-      <span>Sync Now</span>
+      <span className="animate-pulse-dim">{label} · Sync Now</span>
     </button>
   )
 }
