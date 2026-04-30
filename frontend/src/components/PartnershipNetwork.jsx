@@ -44,12 +44,6 @@ const SCALE_OPTIONS = [
   { key: 'partnership_investment_total',label: 'Partnership Value' },
 ]
 
-const STAGES = ['announced', 'signed', 'active', 'dissolved']
-
-const INDUSTRY_SEGMENTS = [
-  'cell_manufacturing', 'materials_mining', 'recycling', 'ev_oem', 'energy_storage', 'other'
-]
-
 // Supply chain hierarchy for vertical gravity
 const HIERARCHY_ORDER = {
   'Raw Materials': 0,
@@ -171,17 +165,8 @@ function PartnershipNetwork({ onSelectCompany }) {
   // Clicked-link detail panel
   const [clickedLink, setClickedLink] = useState(null)
 
-  // Filter state
-  const [sidebarOpen, setSidebarOpen] = useState(true)
   const [investorPanelOpen, setInvestorPanelOpen] = useState(false)
   const [investorGroup, setInvestorGroup] = useState([])
-  const [filterTypes, setFilterTypes] = useState([])       // partnership types
-  const [filterStages, setFilterStages] = useState([])
-  const [filterSegments, setFilterSegments] = useState([])
-  const [filterDateFrom, setFilterDateFrom] = useState('')
-  const [filterDateTo, setFilterDateTo] = useState('')
-  const [filterGeography, setFilterGeography] = useState('')
-  const [filterGovToggle, setFilterGovToggle] = useState('all') // all, gov_only, private_only
 
   // Classify state
   const [classifyState, setClassifyState] = useState('idle') // idle | running | done | error
@@ -599,43 +584,6 @@ function PartnershipNetwork({ onSelectCompany }) {
       return nodeIds.has(s) && nodeIds.has(t)
     })
 
-    // Filter by partnership type
-    if (filterTypes.length > 0) {
-      links = links.filter(l => filterTypes.includes(l.type))
-    }
-    // Filter by stage
-    if (filterStages.length > 0) {
-      links = links.filter(l => filterStages.includes(l.stage))
-    }
-    // Filter by date range
-    if (filterDateFrom) {
-      links = links.filter(l => !l.date || l.date >= filterDateFrom)
-    }
-    if (filterDateTo) {
-      links = links.filter(l => !l.date || l.date <= filterDateTo)
-    }
-    // Filter by geography
-    if (filterGeography) {
-      const geoLower = filterGeography.toLowerCase()
-      const geoNodeIds = new Set(
-        graphData.nodes.filter(n =>
-          (n.industry_segment || '').toLowerCase().includes(geoLower) ||
-          (n.type || '').toLowerCase().includes(geoLower)
-        ).map(n => n.id)
-      )
-      links = links.filter(l => {
-        const s = typeof l.source === 'object' ? l.source.id : l.source
-        const t = typeof l.target === 'object' ? l.target.id : l.target
-        return geoNodeIds.has(s) || geoNodeIds.has(t)
-      })
-    }
-    // Gov toggle
-    if (filterGovToggle === 'gov_only') {
-      links = links.filter(l => l.type === 'government_grant')
-    } else if (filterGovToggle === 'private_only') {
-      links = links.filter(l => l.type !== 'government_grant')
-    }
-
     // Filter nodes to only those connected
     const connectedIds = new Set()
     links.forEach(l => {
@@ -665,24 +613,8 @@ function PartnershipNetwork({ onSelectCompany }) {
       })
     }
 
-    // Filter by industry segment
-    if (filterSegments.length > 0) {
-      const segNodeIds = new Set(nodes.filter(n => filterSegments.includes(n.industry_segment)).map(n => n.id))
-      links = links.filter(l => {
-        const s = typeof l.source === 'object' ? l.source.id : l.source
-        const t = typeof l.target === 'object' ? l.target.id : l.target
-        return segNodeIds.has(s) || segNodeIds.has(t)
-      })
-      const finalIds = new Set()
-      links.forEach(l => {
-        finalIds.add(typeof l.source === 'object' ? l.source.id : l.source)
-        finalIds.add(typeof l.target === 'object' ? l.target.id : l.target)
-      })
-      nodes = nodes.filter(n => finalIds.has(n.id))
-    }
-
     return { nodes, links }
-  }, [graphData, filterTypes, filterStages, filterDateFrom, filterDateTo, filterGeography, filterGovToggle, filterSegments, searchQuery])
+  }, [graphData, searchQuery])
 
   /* ── Collapse investor nodes into one meta-bubble ── */
   const isInvestorNode = (node) => {
@@ -1033,133 +965,11 @@ function PartnershipNetwork({ onSelectCompany }) {
 
   return (
     <div className={`flex flex-1 min-h-0 ${dark ? 'bg-[#0D1B2E]' : 'bg-bmw-gray-light'}`}>
-      {/* ── Filter sidebar ── */}
-      {sidebarOpen && (
-        <div className={`w-64 ${panelBg} border-r ${borderClr} flex flex-col overflow-y-auto shrink-0`}>
-          <div className="px-4 py-3 border-b border-inherit flex items-center justify-between">
-            <span className={`text-xs font-semibold uppercase tracking-wider ${textMuted}`}>Filters</span>
-            <button onClick={() => setSidebarOpen(false)} className={`text-sm ${textMuted} hover:text-gray-300`}>x</button>
-          </div>
-
-          {/* Partnership Type */}
-          <FilterSection title="Partnership Type" dark={dark}>
-            {Object.entries(LINK_TYPE_COLORS).map(([key, { label, base }]) => (
-              <label key={key} className="flex items-center gap-2 text-xs cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={filterTypes.includes(key)}
-                  onChange={() => setFilterTypes(prev =>
-                    prev.includes(key) ? prev.filter(t => t !== key) : [...prev, key]
-                  )}
-                  className="rounded"
-                />
-                <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: base }} />
-                <span className={textNormal}>{label}</span>
-              </label>
-            ))}
-          </FilterSection>
-
-          {/* Stage */}
-          <FilterSection title="Stage" dark={dark}>
-            {STAGES.map(s => (
-              <label key={s} className="flex items-center gap-2 text-xs cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={filterStages.includes(s)}
-                  onChange={() => setFilterStages(prev =>
-                    prev.includes(s) ? prev.filter(t => t !== s) : [...prev, s]
-                  )}
-                  className="rounded"
-                />
-                <span className={`${textNormal} capitalize`}>{s}</span>
-              </label>
-            ))}
-          </FilterSection>
-
-          {/* Date Range */}
-          <FilterSection title="Date Range" dark={dark}>
-            <div className="space-y-1.5">
-              <input
-                type="text"
-                placeholder="From (YYYY)"
-                value={filterDateFrom}
-                onChange={e => setFilterDateFrom(e.target.value)}
-                className={`w-full border rounded px-2 py-1 text-xs ${inputBg}`}
-              />
-              <input
-                type="text"
-                placeholder="To (YYYY)"
-                value={filterDateTo}
-                onChange={e => setFilterDateTo(e.target.value)}
-                className={`w-full border rounded px-2 py-1 text-xs ${inputBg}`}
-              />
-            </div>
-          </FilterSection>
-
-          {/* Industry Segment */}
-          <FilterSection title="Industry Segment" dark={dark}>
-            {INDUSTRY_SEGMENTS.map(s => (
-              <label key={s} className="flex items-center gap-2 text-xs cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={filterSegments.includes(s)}
-                  onChange={() => setFilterSegments(prev =>
-                    prev.includes(s) ? prev.filter(t => t !== s) : [...prev, s]
-                  )}
-                  className="rounded"
-                />
-                <span className={`${textNormal} capitalize`}>{s.replace(/_/g, ' ')}</span>
-              </label>
-            ))}
-          </FilterSection>
-
-          {/* Government Toggle */}
-          <FilterSection title="Government / Private" dark={dark}>
-            {['all', 'gov_only', 'private_only'].map(opt => (
-              <label key={opt} className="flex items-center gap-2 text-xs cursor-pointer">
-                <input
-                  type="radio"
-                  name="gov"
-                  checked={filterGovToggle === opt}
-                  onChange={() => setFilterGovToggle(opt)}
-                />
-                <span className={textNormal}>
-                  {opt === 'all' ? 'All' : opt === 'gov_only' ? 'Government Only' : 'Private Only'}
-                </span>
-              </label>
-            ))}
-          </FilterSection>
-
-          {/* Clear all */}
-          <div className="px-4 py-3">
-            <button
-              onClick={() => {
-                setFilterTypes([]); setFilterStages([]); setFilterDateFrom(''); setFilterDateTo('')
-                setFilterGeography(''); setFilterGovToggle('all'); setFilterSegments([])
-              }}
-              className="w-full text-xs text-bmw-blue hover:underline"
-            >
-              Clear all filters
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* ── Main graph area ── */}
       <div className="flex flex-col flex-1 min-h-0 min-w-0">
         {/* Controls bar */}
         <div className={`${panelBg} border-b ${borderClr} px-4 py-2.5 flex items-center gap-3 flex-wrap`}>
-          <button
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            className={`text-xs px-3 py-1.5 rounded border transition-colors ${
-              sidebarOpen
-                ? (dark ? 'bg-blue-600 text-white border-blue-600' : 'bg-[text-bmw-text-primary] text-white border-[text-bmw-text-primary]')
-                : `${dark ? 'border-gray-600 text-gray-400 hover:border-blue-500' : 'border-bmw-border text-gray-600 hover:border-bmw-blue'}`
-            }`}
-          >
-            Filters
-          </button>
-
           {/* Zoom controls */}
           <div className="flex items-center gap-1">
             <button
@@ -1862,24 +1672,3 @@ function HRow({ dark, label, value }) {
   )
 }
 
-function FilterSection({ title, dark, children }) {
-  const [open, setOpen] = useState(true)
-  return (
-    <div className={`border-b ${dark ? 'border-gray-700' : 'border-bmw-border'}`}>
-      <button
-        onClick={() => setOpen(!open)}
-        className={`w-full px-4 py-2.5 text-xs font-medium uppercase tracking-wider flex items-center justify-between ${
-          dark ? 'text-gray-400 hover:text-gray-300' : 'text-gray-500 hover:text-gray-700'
-        }`}
-      >
-        {title}
-        <span className="text-[10px]">{open ? '\u25B2' : '\u25BC'}</span>
-      </button>
-      {open && (
-        <div className="px-4 pb-3 space-y-2">
-          {children}
-        </div>
-      )}
-    </div>
-  )
-}
