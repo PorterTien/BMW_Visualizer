@@ -387,6 +387,14 @@ def companies_network(db: Session = Depends(get_db)):
     virtual_id = -1
     seen_links: set[tuple] = set()
 
+    def _f(v):
+        if v is None:
+            return None
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
     for c in companies:
         key = _norm_company_name(c.company_name)
         if not key:
@@ -400,10 +408,10 @@ def companies_network(db: Session = Depends(get_db)):
             "id": c.id,
             "name": c.company_name,
             "type": c.company_type,
-            "employees": c.number_of_employees,
-            "market_cap_usd": c.market_cap_usd,
-            "revenue_usd": c.revenue_usd,
-            "total_funding_usd": c.total_funding_usd,
+            "employees": int(c.number_of_employees) if c.number_of_employees is not None else None,
+            "market_cap_usd": _f(c.market_cap_usd),
+            "revenue_usd": _f(c.revenue_usd),
+            "total_funding_usd": _f(c.total_funding_usd),
             "segment": c.supply_chain_segment,
             "in_db": True,
         })

@@ -706,15 +706,25 @@ def _build_partnership_graph(db: Session) -> dict:
         if key:
             company_name_map.setdefault(key, cid)
 
+    def _f(v):
+        """Coerce DB numeric values to plain Python float/int — PostgreSQL can
+        return Decimal for NUMERIC columns, which json.dumps can't serialize."""
+        if v is None:
+            return None
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
     # Gather metrics for percentile estimation — relevant companies only.
     metrics_by_company: dict[int, dict] = {}
     for c in companies:
         metrics_by_company[c.id] = {
-            "market_cap_usd": c.market_cap_usd,
-            "revenue_usd": c.revenue_usd,
-            "employee_count": c.number_of_employees,
-            "total_funding_usd": c.total_funding_usd,
-            "manufacturing_capacity_gwh": _parse_max_gwh(c.gwh_capacity),
+            "market_cap_usd": _f(c.market_cap_usd),
+            "revenue_usd": _f(c.revenue_usd),
+            "employee_count": int(c.number_of_employees) if c.number_of_employees is not None else None,
+            "total_funding_usd": _f(c.total_funding_usd),
+            "manufacturing_capacity_gwh": _f(_parse_max_gwh(c.gwh_capacity)),
         }
 
     # Pull company_metrics only for relevant companies.
@@ -725,7 +735,7 @@ def _build_partnership_graph(db: Session) -> dict:
     )
     for m in all_metrics:
         if m.company_id in metrics_by_company:
-            metrics_by_company[m.company_id][m.metric_name] = m.metric_value
+            metrics_by_company[m.company_id][m.metric_name] = _f(m.metric_value)
 
     # Compute percentiles for approximation
     metric_ranks = _compute_percentiles(metrics_by_company)
@@ -799,7 +809,7 @@ def _build_partnership_graph(db: Session) -> dict:
                         "type": p.partnership_type,
                         "direction": direction,
                         "stage": p.stage,
-                        "deal_value": p.deal_value,
+                        "deal_value": _f(p.deal_value),
                         "date": p.date_announced,
                         "scope": p.scope,
                     })
