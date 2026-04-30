@@ -264,6 +264,7 @@ def list_companies(
         db.query(Company, pc.label("partner_count"))
         .options(load_only(*_COMPANY_LIST_LOAD_ONLY))
         .filter(or_(Company.data_source.is_(None), Company.data_source != 'pitchbook_investor'))
+        .filter(or_(Company.supply_chain_segment.is_(None), ~Company.supply_chain_segment.contains('Legal & Financial Services')))
     )
     if search:
         q = q.filter(Company.company_name.ilike(f"%{search}%"))
@@ -293,6 +294,7 @@ def companies_map(db: Session = Depends(get_db)):
         db.query(Company)
         .options(load_only(*_COMPANY_MAP_LOAD_ONLY))
         .filter(or_(Company.data_source.is_(None), Company.data_source != 'pitchbook_investor'))
+        .filter(or_(Company.supply_chain_segment.is_(None), ~Company.supply_chain_segment.contains('Legal & Financial Services')))
         .all()
     )
     results = []
