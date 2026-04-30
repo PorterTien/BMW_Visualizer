@@ -343,17 +343,23 @@ export default function CompanyTable({ filters, onOpenCompany }) {
   }, [watchedIds, watchTogglingId, isAuthed, watchlistLists, handleAddToList])
 
   const categoryCounts = useMemo(() => {
-    const counts = { all: companies.length }
+    const base = companies.filter(
+      (c) => !c.supply_chain_segment?.includes('Legal & Financial Services')
+    )
+    const counts = { all: base.length }
     for (const cat of CATEGORIES) {
       if (cat.key !== 'all') {
-        counts[cat.key] = companies.filter((c) => c.company_type === cat.key).length
+        counts[cat.key] = base.filter((c) => c.company_type === cat.key).length
       }
     }
     return counts
   }, [companies])
 
   const filtered = useMemo(() => {
-    let rows = companies
+    // Exclude financial/investor companies (VC, banks, law firms, etc.) — they remain visible on the map
+    let rows = companies.filter(
+      (c) => !c.supply_chain_segment?.includes('Legal & Financial Services')
+    )
     if (activeCategory !== 'all') {
       rows = rows.filter((c) => c.company_type === activeCategory)
     }
