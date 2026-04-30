@@ -352,6 +352,7 @@ export default function CompanyMap({ filters, onSelectCompany, highlightName }) 
   }, [])
 
   const filtered = useMemo(() => companies.filter((c) => {
+    if (c.supply_chain_segment?.includes('Legal & Financial Services')) return false
     if (filters.search) {
       const q = filters.search.toLowerCase()
       if (!c.company_name?.toLowerCase().includes(q)) return false
