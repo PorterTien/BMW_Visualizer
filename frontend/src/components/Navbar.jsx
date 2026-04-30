@@ -163,7 +163,7 @@ export default function Navbar({
           <img
             src="/bmw-logo.png"
             alt="BMW"
-            className="w-8 h-8 rounded-full object-cover flex-shrink-0"
+            className="w-7 h-7 rounded-full object-contain flex-shrink-0"
           />
           <span className="text-bmw-navy font-bold text-base whitespace-nowrap tracking-tight font-display">
             BMW Battery
