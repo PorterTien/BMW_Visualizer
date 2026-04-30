@@ -31,7 +31,15 @@
       "Bash(sqlite3 /Users/portertien/Projects/BMW_data_visualizer/backend/battery_intel.db \"ALTER TABLE companies ADD COLUMN manual_overrides TEXT;\")",
       "Bash(sqlite3 /Users/portertien/Projects/BMW_data_visualizer/battery_intel.db \"ALTER TABLE companies ADD COLUMN manual_overrides TEXT;\")",
       "Bash(sqlite3 /Users/portertien/Projects/BMW_data_visualizer/backend/battery_intel.db \"SELECT name FROM sqlite_master WHERE type='table';\")",
-      "Bash(sqlite3 /Users/portertien/Projects/BMW_data_visualizer/battery_intel.db \"PRAGMA table_info\\(companies\\);\")"
+      "Bash(sqlite3 /Users/portertien/Projects/BMW_data_visualizer/battery_intel.db \"PRAGMA table_info\\(companies\\);\")",
+      "Bash(kill %1)",
+      "Bash(.venv/bin/python -m uvicorn backend.main:app --port 8001)",
+      "Bash(.venv/bin/python -c \"import json,sys; g=json.load\\(sys.stdin\\); print\\(f'nodes={len\\(g[\\\\\"nodes\\\\\"]\\)}, links={len\\(g[\\\\\"links\\\\\"]\\)}'\\)\")",
+      "Bash(.venv/bin/pip show *)",
+      "Bash(.venv/bin/pip install *)",
+      "Bash(.venv/bin/uvicorn backend.main:app --port 8001)",
+      "Bash(.venv/bin/python3 -c ' *)",
+      "Bash(/Users/portertien/Projects/BMW_data_visualizer/venv/bin/pip show *)"
     ]
   }
 }

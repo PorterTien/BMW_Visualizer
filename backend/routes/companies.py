@@ -402,7 +402,7 @@ def companies_network(db: Session = Depends(get_db)):
             "id": c.id,
             "name": c.company_name,
             "type": c.company_type,
-            "employees": int(c.number_of_employees) if c.number_of_employees is not None else None,
+            "employee_count": int(c.number_of_employees) if c.number_of_employees is not None else None,
             "market_cap_usd": _f(c.market_cap_usd),
             "revenue_usd": _f(c.revenue_usd),
             "total_funding_usd": _f(c.total_funding_usd),
@@ -433,7 +433,7 @@ def companies_network(db: Session = Depends(get_db)):
                     "id": pid,
                     "name": partner_name,
                     "type": "other",
-                    "employees": 50,
+                    "employee_count": None,
                     "segment": None,
                     "in_db": False,
                 })

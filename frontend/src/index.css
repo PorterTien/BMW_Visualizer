@@ -90,7 +90,7 @@
 }
 @keyframes heat-pulse {
   0%, 100% { transform: scale(1); opacity: 0.85; }
-  50% { transform: scale(1.05); opacity: 1; }
+  50% { transform: scale(1.02); opacity: 1; }
 }
 .heatmap-dot-icon {
   background: transparent !important;

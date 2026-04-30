@@ -150,16 +150,7 @@ function Legend({ hoveredType, pinnedType, onHoverType, onPinType }) {
         onClick={() => setCollapsed(!collapsed)}
         className="flex items-center justify-between w-full px-3 py-2 font-semibold text-[text-bmw-text-primary] hover:bg-white/80"
       >
-        <span className="flex items-center gap-1">
-          <span>Company Type</span>
-          {/* Keep icon slot fixed so clicking pin never changes legend width */}
-          <span
-            className={`text-[10px] w-3 inline-flex justify-center ${pinnedType ? 'text-bmw-blue' : 'text-transparent'}`}
-            aria-hidden="true"
-          >
-            📌
-          </span>
-        </span>
+        <span>Company Type</span>
         <span className="ml-4 text-gray-400">{collapsed ? '▲' : '▼'}</span>
       </button>
       {!collapsed && (
@@ -170,13 +161,11 @@ function Legend({ hoveredType, pinnedType, onHoverType, onPinType }) {
           {Object.entries(TYPE_COLORS).map(([type, color]) => {
             const isActive = activeType === type
             const isDimmed = activeType && activeType !== type
-            const isPinned = pinnedType === type
             return (
               <div
                 key={type}
                 onMouseEnter={() => onHoverType?.(type)}
                 onClick={() => onPinType?.(type)}
-                title={isPinned ? 'Click to unpin' : 'Click to pin highlight'}
                 className={`flex items-center gap-2 px-2 py-0.5 rounded cursor-pointer transition-all ${
                   isActive ? 'bg-gray-100 font-semibold' : isDimmed ? 'opacity-40' : ''
                 }`}
@@ -190,18 +179,9 @@ function Legend({ hoveredType, pinnedType, onHoverType, onPinType }) {
                   }}
                 />
                 <span className="text-gray-700 capitalize text-[11px] flex-1">{type}</span>
-                {isPinned && <span className="text-[10px] text-bmw-blue">📌</span>}
               </div>
             )
           })}
-          {pinnedType && (
-            <button
-              onClick={() => onPinType?.(pinnedType)}
-              className="w-full mt-1 text-[10px] text-bmw-blue hover:underline text-left px-2 py-0.5"
-            >
-              Clear pin
-            </button>
-          )}
         </div>
       )}
     </div>
@@ -241,9 +221,6 @@ export default function CompanyMap({ filters, onSelectCompany, highlightName }) 
   const [heatmapMode, setHeatmapMode] = useState(false)
   const [watchlistIds, setWatchlistIds] = useState(new Set())
   const [hoveredType, setHoveredType] = useState(null)
-  // Click-to-pin: when a legend row is clicked, its type stays highlighted
-  // until the user clicks it again (or clicks a different row). Pinned state
-  // takes precedence over hover so the markers don't flicker.
   const [pinnedType, setPinnedType] = useState(null)
   const activeType = pinnedType || hoveredType
 

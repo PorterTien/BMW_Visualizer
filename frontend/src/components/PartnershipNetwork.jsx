@@ -172,7 +172,7 @@ function PartnershipNetwork({ onSelectCompany }) {
   const [clickedLink, setClickedLink] = useState(null)
 
   // Filter state
-  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(true)
   const [investorPanelOpen, setInvestorPanelOpen] = useState(false)
   const [investorGroup, setInvestorGroup] = useState([])
   const [filterTypes, setFilterTypes] = useState([])       // partnership types
@@ -643,7 +643,7 @@ function PartnershipNetwork({ onSelectCompany }) {
       connectedIds.add(typeof l.target === 'object' ? l.target.id : l.target)
     })
 
-    let nodes = graphData.nodes.filter(n => connectedIds.has(n.id))
+    let nodes = graphData.nodes.filter(n => n.in_db !== false || connectedIds.has(n.id))
 
     // Search filter
     if (searchQuery) {

@@ -29,14 +29,22 @@ const COUNTRIES = [
   'Norway', 'Israel', 'Singapore',
 ]
 
+const _sectionOpen = {}
+
 function DropdownFilter({ label, options, selected, onChange }) {
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(() => _sectionOpen[label] ?? true)
   const activeCount = selected.length
+
+  function toggle() {
+    const next = !open
+    _sectionOpen[label] = next
+    setOpen(next)
+  }
 
   return (
     <div className="border-b border-bmw-border">
       <button
-        onClick={() => setOpen((o) => !o)}
+        onClick={toggle}
         className="w-full flex items-center justify-between px-3 py-2 text-xs font-semibold text-[text-bmw-text-primary] hover:bg-bmw-gray-light transition-colors"
       >
         <span>{label}{activeCount > 0 ? <span className="ml-1 text-bmw-blue">({activeCount})</span> : ''}</span>
