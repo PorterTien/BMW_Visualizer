@@ -2,5 +2,12 @@
   "_comment": "Manual coordinate overrides for companies whose NAATBatt coordinates cannot be fixed automatically (wrong values, not just wrong sign). Keys must match company_name exactly. Re-applied on every fix_coords run.",
   "Capgemini Engineering": { "lat": 48.8566, "lng": 2.3522 },
   "e-Storage": { "lat": 43.4516, "lng": -80.4925 },
-  "Bobaek": { "lat": 36.8151, "lng": 127.1139 }
+  "Bobaek": { "lat": 36.8151, "lng": 127.1139 },
+  "Vianode AS": { "lat": 59.9139, "lng": 10.7522 },
+  "Motivair": { "lat": 42.8864, "lng": -78.8784 },
+  "Wieland MicroCool": { "lat": 48.3984, "lng": 9.9908 },
+  "Toyota Motor": { "lat": 35.0847, "lng": 137.1525 },
+  "Daejin Advanced Materials": { "lat": 37.5665, "lng": 126.9780 },
+  "Unitech": { "lat": 37.3219, "lng": 126.8309 },
+  "Minera y Metalúrgica del Boleo": { "lat": 27.3337, "lng": -112.3309}
 }

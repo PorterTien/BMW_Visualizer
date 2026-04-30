@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { signInWithGoogle, signOut } from '../lib/supabase'
+import { triggerSync, getSyncStatus } from '../api/client'
 
 const TABS = [
   { id: 'watchlist', label: 'Watchlist' },
@@ -12,6 +13,57 @@ const TABS = [
 export default function Navbar({ activeTab, setActiveTab, watchlistBreaking = 0, onOpenDataImport = () => {}, user = null }) {
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const dropdownRef = useRef(null)
+  const [syncState, setSyncState] = useState('idle') // idle | syncing | done
+  const [stale, setStale] = useState(null) // null | { label, level: 'info'|'warn'|'urgent' }
+  const syncPollRef = useRef(null)
+  const syncDoneRef = useRef(null)
+
+  useEffect(() => {
+    getSyncStatus().then(({ data }) => {
+      const runAt = data?.last_sync?.run_at
+      if (!runAt) return
+      const diffMs = Date.now() - new Date(runAt).getTime()
+      const diffDays = diffMs / (1000 * 60 * 60 * 24)
+
+      let label
+      if (diffDays < 1)       label = 'today'
+      else if (diffDays < 2)  label = 'yesterday'
+      else if (diffDays < 14) label = `${Math.floor(diffDays)} days ago`
+      else if (diffDays < 30) label = `${Math.floor(diffDays / 7)} week${Math.floor(diffDays / 7) !== 1 ? 's' : ''} ago`
+      else                    label = `${Math.floor(diffDays / 30)} month${Math.floor(diffDays / 30) !== 1 ? 's' : ''} ago`
+
+      const level = diffDays >= 30 ? 'urgent' : diffDays >= 14 ? 'warn' : 'info'
+      setStale({ label: label, level: level })
+    }).catch(() => {})
+  }, [])
+
+  async function handleSync() {
+    setSyncState('syncing')
+    setStale(null)
+    try {
+      await triggerSync()
+      syncPollRef.current = setInterval(async () => {
+        try {
+          const { data } = await getSyncStatus()
+          if (!data.running) {
+            clearInterval(syncPollRef.current)
+            setSyncState('done')
+            syncDoneRef.current = setTimeout(() => setSyncState('idle'), 3000)
+          }
+        } catch {
+          clearInterval(syncPollRef.current)
+          setSyncState('idle')
+        }
+      }, 2000)
+    } catch {
+      setSyncState('idle')
+    }
+  }
+
+  useEffect(() => () => {
+    clearInterval(syncPollRef.current)
+    clearTimeout(syncDoneRef.current)
+  }, [])
 
   useEffect(() => {
     function handleClickOutside(e) {
@@ -63,8 +115,42 @@ export default function Navbar({ activeTab, setActiveTab, watchlistBreaking = 0,
           ))}
         </div>
 
-        {/* Right side: Data Import + auth */}
+        {/* Right side: Sync Now + Data Import + auth */}
         <div className="flex items-center gap-3 min-w-fit">
+          {stale && syncState === 'idle' && (
+            <div className="flex items-center gap-2">
+              {stale.level === 'urgent' && (
+                <span className="relative flex h-2 w-2 flex-shrink-0">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-red-500" />
+                </span>
+              )}
+              {stale.level === 'warn' && (
+                <span className="relative flex h-2 w-2 flex-shrink-0">
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-yellow-400" />
+                </span>
+              )}
+              <span className={`text-xs font-medium whitespace-nowrap ${
+                stale.level === 'urgent' ? 'text-red-500 animate-pulse' :
+                stale.level === 'warn'   ? 'text-yellow-600' :
+                                           'text-gray-400'
+              }`}>
+                Last synced {stale.label}
+              </span>
+            </div>
+          )}
+          <button
+            onClick={handleSync}
+            disabled={syncState === 'syncing'}
+            className={`text-xs px-4 py-1.5 rounded font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+              syncState === 'done'     ? 'border border-green-300 bg-green-50 text-green-700' :
+              stale?.level === 'urgent' ? 'border border-red-300 bg-red-50 text-red-600 hover:bg-red-100' :
+              stale?.level === 'warn'   ? 'border border-yellow-300 bg-yellow-50 text-yellow-700 hover:bg-yellow-100' :
+                                         'border border-gray-200 hover:border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            {syncState === 'syncing' ? 'Syncing…' : syncState === 'done' ? 'Synced ✓' : 'Sync Now'}
+          </button>
           <button
             onClick={() => onOpenDataImport()}
             className="bg-bmw-blue hover:bg-[#3a88ee] text-white text-xs px-4 py-1.5 rounded font-medium transition-colors"
