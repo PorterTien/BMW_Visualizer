@@ -95,12 +95,21 @@ export const getJob = (id) => api.get(`/jobs/${id}`)
 export const listJobs = () => api.get('/jobs')
 
 // Watchlist — uses watchlistApi so the Bearer token is included
-export const getWatchlist = () => watchlistApi.get('/watchlist')
-export const addToWatchlist = (companyId) => watchlistApi.post(`/watchlist/${companyId}`)
-export const removeFromWatchlist = (companyId) => watchlistApi.delete(`/watchlist/${companyId}`)
+export const getWatchlist = (listId) =>
+  watchlistApi.get('/watchlist', listId != null ? { params: { list_id: listId } } : undefined)
+export const addToWatchlist = (companyId, listId) =>
+  watchlistApi.post(`/watchlist/${companyId}`, listId != null ? { list_id: listId } : {})
+export const removeFromWatchlist = (companyId, listId) =>
+  watchlistApi.delete(`/watchlist/${companyId}`, listId != null ? { params: { list_id: listId } } : undefined)
 export const getWatchlistDigest = () => watchlistApi.get('/watchlist/digest/latest')
 export const triggerWatchlistDigest = () => watchlistApi.post('/watchlist/digest/run')
 export const triggerCompanyDigest = (companyId) => watchlistApi.post(`/watchlist/digest/run/${companyId}`)
+
+// Watchlist lists
+export const getWatchlistLists = () => watchlistApi.get('/watchlist/lists')
+export const createWatchlistList = (name) => watchlistApi.post('/watchlist/lists', { name })
+export const renameWatchlistList = (listId, name) => watchlistApi.patch(`/watchlist/lists/${listId}`, { name })
+export const deleteWatchlistList = (listId) => watchlistApi.delete(`/watchlist/lists/${listId}`)
 
 // Sector Research
 export const getSectorCategories = () => api.get('/sector-research/categories')

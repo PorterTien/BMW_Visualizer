@@ -2,7 +2,7 @@ import React, { useEffect, useState, useMemo, useCallback } from 'react'
 import { MapContainer, TileLayer, CircleMarker, Marker, Popup } from 'react-leaflet'
 import MarkerClusterGroup from 'react-leaflet-cluster'
 import L from 'leaflet'
-import { getCompaniesMap, getWatchlist, addToWatchlist, removeFromWatchlist } from '../api/client'
+import { getCompaniesMap, getWatchlist, addToWatchlist, removeFromWatchlist, getWatchlistLists, createWatchlistList } from '../api/client'
 import { COUNTRY_ALIASES } from '../utils/countries'
 
 const LIGHT_TILES = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
@@ -71,16 +71,48 @@ function createDotIcon(companyType, isHQ) {
 
 /* ── Shared popup content ── */
 
-function PopupContent({ c, onSelectCompany, watchlistIds, onToggleWatchlist }) {
+function PopupContent({ c, onSelectCompany, watchlistIds, onToggleWatchlist, watchlistLists, onAddToList, onCreateAndAdd }) {
   const baseColor = TYPE_COLORS[c.company_type] || '#9CA3AF'
   const isHQ = c.is_hq
   const starred = watchlistIds.has(c.id)
   const [busy, setBusy] = React.useState(false)
+  const [showPicker, setShowPicker] = React.useState(false)
+  const [newListName, setNewListName] = React.useState('')
+  const [creatingList, setCreatingList] = React.useState(false)
 
   async function handleStar(e) {
     e.stopPropagation()
+    if (starred) {
+      setBusy(true)
+      await onToggleWatchlist(c.id, true)
+      setBusy(false)
+      return
+    }
+    // Adding — show picker if multiple lists, else add directly
+    if (watchlistLists.length > 1) {
+      setShowPicker(true)
+      return
+    }
     setBusy(true)
-    await onToggleWatchlist(c.id, starred)
+    await onAddToList(c.id, watchlistLists[0]?.id ?? null)
+    setBusy(false)
+  }
+
+  async function pickList(listId) {
+    setShowPicker(false)
+    setBusy(true)
+    await onAddToList(c.id, listId)
+    setBusy(false)
+  }
+
+  async function createAndAdd() {
+    const name = newListName.trim()
+    if (!name) return
+    setShowPicker(false)
+    setCreatingList(false)
+    setNewListName('')
+    setBusy(true)
+    await onCreateAndAdd(c.id, name)
     setBusy(false)
   }
 
@@ -88,15 +120,52 @@ function PopupContent({ c, onSelectCompany, watchlistIds, onToggleWatchlist }) {
     <div className="min-w-[200px]">
       <div className="flex items-start justify-between gap-2 mb-2">
         <div className="font-bold text-bmw-text-primary text-sm leading-tight">{c.company_name}</div>
-        <button
-          onClick={handleStar}
-          disabled={busy}
-          title={starred ? 'Remove from watchlist' : 'Add to watchlist'}
-          className="flex-shrink-0 text-lg leading-none transition-colors disabled:opacity-40"
-          style={{ color: starred ? '#F59E0B' : '#D1D5DB' }}
-        >
-          {starred ? '★' : '☆'}
-        </button>
+        <div className="relative flex-shrink-0">
+          <button
+            onClick={handleStar}
+            disabled={busy}
+            title={starred ? 'Remove from watchlist' : 'Add to watchlist'}
+            className="text-lg leading-none transition-colors disabled:opacity-40"
+            style={{ color: starred ? '#F59E0B' : '#D1D5DB' }}
+          >
+            {starred ? '★' : '☆'}
+          </button>
+          {showPicker && (
+            <div className="absolute right-0 top-6 z-[9999] bg-white border border-gray-200 rounded-lg shadow-xl w-44 py-1">
+              <div className="px-3 py-1 text-[10px] font-semibold text-gray-400 uppercase tracking-wider border-b border-gray-100">Add to list</div>
+              {watchlistLists.map((lst) => (
+                <button
+                  key={lst.id}
+                  onClick={() => pickList(lst.id)}
+                  className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-blue-50 flex justify-between gap-2"
+                >
+                  <span className="truncate">{lst.name}</span>
+                  <span className="text-[10px] text-gray-400 flex-shrink-0">{lst.company_count}</span>
+                </button>
+              ))}
+              <div className="border-t border-gray-100 mt-1 pt-1 px-2 pb-1">
+                {creatingList ? (
+                  <div className="flex gap-1">
+                    <input
+                      autoFocus
+                      type="text"
+                      placeholder="Name…"
+                      value={newListName}
+                      onChange={(e) => setNewListName(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') createAndAdd(); if (e.key === 'Escape') setCreatingList(false) }}
+                      className="flex-1 text-xs border border-gray-200 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                    <button onClick={createAndAdd} className="text-xs bg-blue-600 text-white px-2 py-0.5 rounded hover:bg-blue-700">Add</button>
+                  </div>
+                ) : (
+                  <button onClick={() => setCreatingList(true)} className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1">
+                    <span>+</span> New list
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
       {c.facility_name && c.facility_name !== c.company_name && (
         <div className="text-xs text-bmw-text-secondary font-medium mb-1">{c.facility_name}</div>
@@ -220,6 +289,7 @@ export default function CompanyMap({ filters, onSelectCompany, highlightName }) 
   const [loading, setLoading] = useState(true)
   const [heatmapMode, setHeatmapMode] = useState(false)
   const [watchlistIds, setWatchlistIds] = useState(new Set())
+  const [watchlistLists, setWatchlistLists] = useState([])
   const [hoveredType, setHoveredType] = useState(null)
   const [pinnedType, setPinnedType] = useState(null)
   const activeType = pinnedType || hoveredType
@@ -235,11 +305,12 @@ export default function CompanyMap({ filters, onSelectCompany, highlightName }) 
     getWatchlist()
       .then(({ data }) => setWatchlistIds(new Set(data.map((w) => w.company_id))))
       .catch(() => {})
+    getWatchlistLists()
+      .then(({ data }) => setWatchlistLists(data))
+      .catch(() => {})
   }, [])
 
   const handleToggleWatchlist = useCallback(async (companyId, currentlyStarred) => {
-    // Optimistic update; rollback + re-fetch on failure so the star doesn't
-    // drift out of sync with the server.
     setWatchlistIds((prev) => {
       const next = new Set(prev)
       if (currentlyStarred) next.delete(companyId); else next.add(companyId)
@@ -253,6 +324,30 @@ export default function CompanyMap({ filters, onSelectCompany, highlightName }) 
       getWatchlist()
         .then(({ data }) => setWatchlistIds(new Set(data.map((w) => w.company_id))))
         .catch(() => {})
+    }
+  }, [])
+
+  const handleAddToList = useCallback(async (companyId, listId) => {
+    setWatchlistIds((prev) => new Set([...prev, companyId]))
+    try {
+      await addToWatchlist(companyId, listId)
+      getWatchlistLists().then(({ data }) => setWatchlistLists(data)).catch(() => {})
+    } catch (err) {
+      console.error('Add to list failed:', err)
+      setWatchlistIds((prev) => { const s = new Set(prev); s.delete(companyId); return s })
+    }
+  }, [])
+
+  const handleCreateAndAdd = useCallback(async (companyId, name) => {
+    setWatchlistIds((prev) => new Set([...prev, companyId]))
+    try {
+      const { data: lst } = await createWatchlistList(name)
+      setWatchlistLists((prev) => [...prev, lst])
+      await addToWatchlist(companyId, lst.id)
+      getWatchlistLists().then(({ data }) => setWatchlistLists(data)).catch(() => {})
+    } catch (err) {
+      console.error('Create list and add failed:', err)
+      setWatchlistIds((prev) => { const s = new Set(prev); s.delete(companyId); return s })
     }
   }, [])
 
@@ -324,7 +419,7 @@ export default function CompanyMap({ filters, onSelectCompany, highlightName }) 
                   icon={createDotIcon(c.company_type, c.is_hq)}
                 >
                   <Popup>
-                    <PopupContent c={c} onSelectCompany={onSelectCompany} watchlistIds={watchlistIds} onToggleWatchlist={handleToggleWatchlist} />
+                    <PopupContent c={c} onSelectCompany={onSelectCompany} watchlistIds={watchlistIds} onToggleWatchlist={handleToggleWatchlist} watchlistLists={watchlistLists} onAddToList={handleAddToList} onCreateAndAdd={handleCreateAndAdd} />
                   </Popup>
                 </Marker>
               ))}
@@ -377,7 +472,7 @@ export default function CompanyMap({ filters, onSelectCompany, highlightName }) 
                   }}
                 >
                   <Popup>
-                    <PopupContent c={c} onSelectCompany={onSelectCompany} watchlistIds={watchlistIds} onToggleWatchlist={handleToggleWatchlist} />
+                    <PopupContent c={c} onSelectCompany={onSelectCompany} watchlistIds={watchlistIds} onToggleWatchlist={handleToggleWatchlist} watchlistLists={watchlistLists} onAddToList={handleAddToList} onCreateAndAdd={handleCreateAndAdd} />
                   </Popup>
                 </CircleMarker>
               </React.Fragment>

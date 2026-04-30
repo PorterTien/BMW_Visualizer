@@ -217,18 +217,35 @@ Index("ix_metric_company", CompanyMetric.company_id)
 Index("ix_metric_name", CompanyMetric.metric_name)
 
 
+class WatchlistList(Base):
+    __tablename__ = "watchlist_lists"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Text, nullable=False, index=True)
+    name = Column(Text, nullable=False)
+    created_at = Column(Text)
+
+    entries = relationship("WatchlistEntry", back_populates="list", cascade="all, delete-orphan")
+
+
+Index("ix_watchlist_lists_user", WatchlistList.user_id)
+
+
 class WatchlistEntry(Base):
     __tablename__ = "watchlist"
-    __table_args__ = (UniqueConstraint('company_id', 'user_id', name='uq_watchlist_company_user'),)
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     company_id = Column(Integer, ForeignKey("companies.id"), nullable=False)
     user_id = Column(Text, nullable=True, index=True)
+    list_id = Column(Integer, ForeignKey("watchlist_lists.id", ondelete="CASCADE"), nullable=True)
     added_at = Column(Text)
+
+    list = relationship("WatchlistList", back_populates="entries")
 
 
 Index("ix_watchlist_company", WatchlistEntry.company_id)
 Index("ix_watchlist_user", WatchlistEntry.user_id)
+Index("ix_watchlist_list", WatchlistEntry.list_id)
 
 
 class WatchlistDigest(Base):

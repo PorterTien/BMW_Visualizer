@@ -7,6 +7,10 @@ import {
   removeFromWatchlist,
   getArticleThumbnail,
   getCompanyDetail,
+  getWatchlistLists,
+  createWatchlistList,
+  renameWatchlistList,
+  deleteWatchlistList,
 } from '../api/client'
 
 const CATEGORY_COLORS = {
@@ -238,6 +242,14 @@ export default function WatchlistPanel({ onOpenCompany, session }) {
   const [companyDetail, setCompanyDetail] = useState(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [infoWidth, setInfoWidth] = useState(() => Math.max(220, Math.floor((window.innerWidth - 224) / 2)))
+
+  // Multi-list state
+  const [lists, setLists] = useState([])
+  const [collapsedLists, setCollapsedLists] = useState(new Set())
+  const [renamingListId, setRenamingListId] = useState(null)
+  const [renameValue, setRenameValue] = useState('')
+  const [addingList, setAddingList] = useState(false)
+  const [newListName, setNewListName] = useState('')
   const resizingRef = useRef(false)
   const resizeStartRef = useRef({ x: 0, w: 0 })
 
@@ -261,12 +273,14 @@ export default function WatchlistPanel({ onOpenCompany, session }) {
 
   const loadData = useCallback(async () => {
     try {
-      const [{ data: wl }, { data: dg }] = await Promise.all([
+      const [{ data: wl }, { data: dg }, { data: ls }] = await Promise.all([
         getWatchlist(),
         getWatchlistDigest(),
+        getWatchlistLists(),
       ])
       setWatchlist(wl)
       setDigests(dg)
+      setLists(ls)
       setOrderedIds((prev) => {
         // Preserve existing order, append any new companies at the end
         const prevSet = new Set(prev)
@@ -354,27 +368,88 @@ export default function WatchlistPanel({ onOpenCompany, session }) {
     setTimeout(() => setRefreshingId(null), 2000)
   }
 
-  async function handleRemove(companyId) {
+  async function handleRemove(companyId, listId = null) {
     try {
-      await removeFromWatchlist(companyId)
-      setWatchlist((prev) => prev.filter((w) => w.company_id !== companyId))
-      setDigests((prev) => prev.filter((d) => d.company_id !== companyId))
-      setOrderedIds((prev) => prev.filter((id) => id !== companyId))
-      setSelectedId((prev) => (prev === companyId ? null : prev))
+      await removeFromWatchlist(companyId, listId)
+      // If removing from a specific list, only remove from watchlist if no longer in any list
+      if (listId !== null) {
+        // Reload to get accurate state
+        const { data: wl } = await getWatchlist()
+        const { data: ls } = await getWatchlistLists()
+        setWatchlist(wl)
+        setLists(ls)
+        const stillWatched = wl.some((w) => w.company_id === companyId)
+        if (!stillWatched) {
+          setOrderedIds((prev) => prev.filter((id) => id !== companyId))
+          setSelectedId((prev) => (prev === companyId ? null : prev))
+        }
+      } else {
+        setWatchlist((prev) => prev.filter((w) => w.company_id !== companyId))
+        setDigests((prev) => prev.filter((d) => d.company_id !== companyId))
+        setOrderedIds((prev) => prev.filter((id) => id !== companyId))
+        setSelectedId((prev) => (prev === companyId ? null : prev))
+        getWatchlistLists().then(({ data }) => setLists(data)).catch(() => {})
+      }
+    } catch (e) { console.error(e) }
+  }
+
+  function toggleCollapse(listId) {
+    setCollapsedLists((prev) => {
+      const next = new Set(prev)
+      if (next.has(listId)) next.delete(listId); else next.add(listId)
+      return next
+    })
+  }
+
+  async function handleCreateList() {
+    const name = newListName.trim()
+    if (!name) return
+    try {
+      const { data: lst } = await createWatchlistList(name)
+      setLists((prev) => [...prev, lst])
+    } catch (e) { console.error(e) }
+    setAddingList(false)
+    setNewListName('')
+  }
+
+  async function handleRenameList(listId) {
+    const name = renameValue.trim()
+    if (!name) { setRenamingListId(null); return }
+    try {
+      await renameWatchlistList(listId, name)
+      setLists((prev) => prev.map((l) => l.id === listId ? { ...l, name } : l))
+    } catch (e) { console.error(e) }
+    setRenamingListId(null)
+    setRenameValue('')
+  }
+
+  async function handleDeleteList(listId) {
+    if (!window.confirm('Delete this list? Companies in it will be removed.')) return
+    try {
+      await deleteWatchlistList(listId)
+      setLists((prev) => prev.filter((l) => l.id !== listId))
+      setCollapsedLists((prev) => { const next = new Set(prev); next.delete(listId); return next })
+      const { data: wl } = await getWatchlist()
+      setWatchlist(wl)
+      setOrderedIds((prev) => prev.filter((id) => wl.some((w) => w.company_id === id)))
+      setSelectedId((prev) => (wl.some((w) => w.company_id === prev) ? prev : null))
     } catch (e) { console.error(e) }
   }
 
   const digestMap = Object.fromEntries(digests.map((d) => [d.company_id, d]))
   const breakingCount = digests.filter((d) => d.has_breaking).length
 
-  // Apply drag order to watchlist
-  const orderedWatchlist = orderedIds
-    .map((id) => watchlist.find((w) => w.company_id === id))
-    .filter(Boolean)
+  // Group watchlist entries by list_id for accordion display
+  const entriesByList = {}
+  for (const lst of lists) entriesByList[lst.id] = []
+  for (const entry of watchlist) {
+    if (entry.list_id != null && entriesByList[entry.list_id]) {
+      entriesByList[entry.list_id].push(entry)
+    }
+  }
 
-  const { itemProps } = useDraggableList(orderedWatchlist, (next) => {
-    setOrderedIds(next.map((w) => w.company_id))
-  })
+  // Unique company count across all lists
+  const totalUniqueCompanies = new Set(watchlist.map((w) => w.company_id)).size
 
   const selectedDigest = selectedId ? digestMap[selectedId] : null
   const selectedCompany = watchlist.find((w) => w.company_id === selectedId)
@@ -393,7 +468,7 @@ export default function WatchlistPanel({ onOpenCompany, session }) {
       <div className="flex items-center justify-between px-6 py-3 bg-white border-b border-[#DDE4EA] flex-shrink-0">
         <div className="flex items-center gap-3">
           <h2 className="font-semibold text-gray-800 text-sm">Watchlist</h2>
-          <span className="text-xs text-gray-400">{watchlist.length} companies</span>
+          <span className="text-xs text-gray-400">{totalUniqueCompanies} companies</span>
           {breakingCount > 0 && (
             <span className="flex items-center gap-1 text-[11px] font-semibold text-red-600 bg-red-100 px-2 py-0.5 rounded-full">
               <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
@@ -417,78 +492,168 @@ export default function WatchlistPanel({ onOpenCompany, session }) {
         </div>
       </div>
 
-      {watchlist.length === 0 ? (
-        <div className="flex flex-col items-center justify-center flex-1 gap-3 text-center">
-          <svg className="w-12 h-12 text-gray-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.499a.562.562 0 0 1 1.04 0l2.125 5.111a.563.563 0 0 0 .475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 0 0-.182.557l1.285 5.385a.562.562 0 0 1-.84.61l-4.725-2.885a.562.562 0 0 0-.586 0L6.982 20.54a.562.562 0 0 1-.84-.61l1.285-5.386a.562.562 0 0 0-.182-.557l-4.204-3.602a.562.562 0 0 1 .321-.988l5.518-.442a.563.563 0 0 0 .475-.345L11.48 3.5Z" />
-          </svg>
-          <div className="text-gray-400 text-sm">No companies in your watchlist yet.</div>
-          <div className="text-gray-300 text-xs">Star companies in the Company Table to track them here.</div>
-        </div>
-      ) : (
-        <div className="flex flex-1 min-h-0">
-          {/* ── Left: draggable company list ── */}
-          <div className="w-56 flex-shrink-0 border-r border-[#DDE4EA] bg-white flex flex-col overflow-hidden">
-            <div className="px-4 py-2 border-b border-[#DDE4EA] bg-[#F7F9FB] flex items-center justify-between">
-              <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Companies</span>
-            </div>
+      <div className="flex flex-1 min-h-0">
+          {/* ── Left: accordion lists ── */}
+          <div className="w-64 flex-shrink-0 border-r border-[#DDE4EA] bg-white flex flex-col overflow-hidden">
             <div className="flex-1 overflow-y-auto">
-              {orderedWatchlist.map((company, i) => {
-                const digest = digestMap[company.company_id]
-                const articleCount = digest?.articles?.length ?? 0
-                const hasBreaking = digest?.has_breaking ?? false
-                const isSelected = selectedId === company.company_id
+              {lists.length === 0 && (
+                <div className="flex flex-col items-center justify-center py-10 gap-2 text-center px-4">
+                  <svg className="w-10 h-10 text-gray-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.499a.562.562 0 0 1 1.04 0l2.125 5.111a.563.563 0 0 0 .475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 0 0-.182.557l1.285 5.385a.562.562 0 0 1-.84.61l-4.725-2.885a.562.562 0 0 0-.586 0L6.982 20.54a.562.562 0 0 1-.84-.61l1.285-5.386a.562.562 0 0 0-.182-.557l-4.204-3.602a.562.562 0 0 1 .321-.988l5.518-.442a.563.563 0 0 0 .475-.345L11.48 3.5Z" />
+                  </svg>
+                  <div className="text-gray-400 text-xs">No lists yet. Create one below.</div>
+                </div>
+              )}
+              {lists.map((lst) => {
+                const listEntries = entriesByList[lst.id] || []
+                const isCollapsed = collapsedLists.has(lst.id)
+                const listBreaking = listEntries.some((e) => digestMap[e.company_id]?.has_breaking)
                 return (
-                  <div
-                    key={company.company_id}
-                    {...itemProps(i)}
-                    onClick={() => setSelectedId(company.company_id)}
-                    className={`flex items-center justify-between px-4 py-3 border-b border-[#EEF2F5] cursor-pointer transition-colors select-none
-                      ${isSelected ? 'bg-[#EBF2FD] border-l-2 border-l-bmw-blue' : 'hover:bg-[#F7F9FB]'}`}
-                  >
-                    {/* Drag handle */}
-                    <svg className="w-3.5 h-3.5 text-gray-300 mr-2 flex-shrink-0 cursor-grab" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 5.25h16.5m-16.5 6h16.5m-16.5 6h16.5" />
-                    </svg>
-
-                    <div className="flex items-center gap-2 min-w-0 flex-1">
-                      {hasBreaking && <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse flex-shrink-0" />}
-                      <CompanyFavicon website={company.company_website} name={company.company_name} size={7} />
-                      <div className="min-w-0">
-                        <div className={`text-sm font-medium truncate ${isSelected ? 'text-bmw-blue' : 'text-gray-800'}`}>
-                          {company.company_name}
-                        </div>
-                        <div className="text-[10px] text-gray-400 mt-0.5">
-                          {articleCount > 0 ? `${articleCount} article${articleCount !== 1 ? 's' : ''}` : 'No news yet'}
-                          {hasBreaking && <span className="ml-1 text-red-500 font-medium">· Breaking</span>}
-                        </div>
+                  <div key={lst.id} className="border-b border-[#DDE4EA]">
+                    {/* List header — click to collapse/expand */}
+                    <div
+                      onClick={() => toggleCollapse(lst.id)}
+                      className="flex items-center justify-between px-3 py-2.5 bg-[#F7F9FB] cursor-pointer hover:bg-[#EEF2F6] select-none group"
+                    >
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                        <svg
+                          className={`w-3 h-3 text-gray-400 flex-shrink-0 transition-transform duration-150 ${isCollapsed ? '' : 'rotate-90'}`}
+                          fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                        </svg>
+                        {renamingListId === lst.id ? (
+                          <input
+                            autoFocus
+                            type="text"
+                            value={renameValue}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={(e) => setRenameValue(e.target.value)}
+                            onBlur={() => handleRenameList(lst.id)}
+                            onKeyDown={(e) => {
+                              e.stopPropagation()
+                              if (e.key === 'Enter') handleRenameList(lst.id)
+                              if (e.key === 'Escape') { setRenamingListId(null); setRenameValue('') }
+                            }}
+                            className="flex-1 text-xs border border-bmw-blue rounded px-1.5 py-0.5 focus:outline-none bg-white"
+                          />
+                        ) : (
+                          <span className="text-xs font-semibold text-gray-700 truncate">{lst.name}</span>
+                        )}
+                        {listBreaking && <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse flex-shrink-0" />}
+                      </div>
+                      <div className="flex items-center gap-1 flex-shrink-0 ml-1">
+                        <span className="text-[10px] text-gray-400">{listEntries.length}</span>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setRenamingListId(lst.id); setRenameValue(lst.name) }}
+                          title="Rename"
+                          className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-bmw-blue transition-all p-0.5"
+                        >
+                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L6.832 19.82a4.5 4.5 0 0 1-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.863 4.487Z" />
+                          </svg>
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleDeleteList(lst.id) }}
+                          title="Delete list"
+                          className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-400 transition-all p-0.5"
+                        >
+                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
                       </div>
                     </div>
-
-                    <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleRefreshOne(company.company_id) }}
-                        disabled={refreshingId === company.company_id}
-                        title="Refresh news"
-                        className="text-gray-400 hover:text-bmw-blue disabled:opacity-40 transition-colors"
-                      >
-                        <svg className={`w-3.5 h-3.5 ${refreshingId === company.company_id ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
-                        </svg>
-                      </button>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleRemove(company.company_id) }}
-                        title="Unstar company"
-                        className="text-amber-400 hover:text-gray-300 transition-colors"
-                      >
-                        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" stroke="none">
-                          <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
-                        </svg>
-                      </button>
-                    </div>
+                    {/* Companies in this list */}
+                    {!isCollapsed && (
+                      <div>
+                        {listEntries.length === 0 ? (
+                          <div className="px-4 py-3 text-[11px] text-gray-300 italic">No companies yet</div>
+                        ) : listEntries.map((entry) => {
+                          const digest = digestMap[entry.company_id]
+                          const articleCount = digest?.articles?.length ?? 0
+                          const hasBreaking = digest?.has_breaking ?? false
+                          const isSelected = selectedId === entry.company_id
+                          return (
+                            <div
+                              key={`${lst.id}-${entry.company_id}`}
+                              onClick={() => setSelectedId(entry.company_id)}
+                              className={`flex items-center justify-between px-3 py-2.5 border-b border-[#F0F3F6] cursor-pointer transition-colors select-none
+                                ${isSelected ? 'bg-[#EBF2FD] border-l-2 border-l-bmw-blue' : 'hover:bg-[#F7F9FB]'}`}
+                            >
+                              <div className="flex items-center gap-2 min-w-0 flex-1">
+                                {hasBreaking && <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse flex-shrink-0" />}
+                                <CompanyFavicon website={entry.company_website} name={entry.company_name} size={6} />
+                                <div className="min-w-0">
+                                  <div className={`text-xs font-medium truncate ${isSelected ? 'text-bmw-blue' : 'text-gray-800'}`}>
+                                    {entry.company_name}
+                                  </div>
+                                  <div className="text-[10px] text-gray-400">
+                                    {articleCount > 0 ? `${articleCount} article${articleCount !== 1 ? 's' : ''}` : 'No news yet'}
+                                    {hasBreaking && <span className="ml-1 text-red-500 font-medium">· Breaking</span>}
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-1 flex-shrink-0 ml-1">
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); handleRefreshOne(entry.company_id) }}
+                                  disabled={refreshingId === entry.company_id}
+                                  title="Refresh news"
+                                  className="text-gray-300 hover:text-bmw-blue disabled:opacity-40 transition-colors"
+                                >
+                                  <svg className={`w-3 h-3 ${refreshingId === entry.company_id ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+                                  </svg>
+                                </button>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); handleRemove(entry.company_id, lst.id) }}
+                                  title="Remove from this list"
+                                  className="text-amber-400 hover:text-gray-300 transition-colors"
+                                >
+                                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                                    <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
+                                  </svg>
+                                </button>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
                   </div>
                 )
               })}
+            </div>
+            {/* New list footer */}
+            <div className="border-t border-[#DDE4EA] px-3 py-2 bg-[#F7F9FB] flex-shrink-0">
+              {addingList ? (
+                <div className="flex gap-1.5">
+                  <input
+                    autoFocus
+                    type="text"
+                    placeholder="List name…"
+                    value={newListName}
+                    onChange={(e) => setNewListName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleCreateList()
+                      if (e.key === 'Escape') { setAddingList(false); setNewListName('') }
+                    }}
+                    className="flex-1 text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-bmw-blue"
+                  />
+                  <button onClick={handleCreateList} className="text-xs bg-bmw-blue text-white px-2.5 py-1 rounded hover:bg-[#2a7de8]">Add</button>
+                  <button onClick={() => { setAddingList(false); setNewListName('') }} className="text-xs text-gray-400 hover:text-gray-600 px-1">Cancel</button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setAddingList(true)}
+                  className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-bmw-blue transition-colors w-full"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                  </svg>
+                  New list
+                </button>
+              )}
             </div>
           </div>
 
@@ -665,8 +830,7 @@ export default function WatchlistPanel({ onOpenCompany, session }) {
               </div>
             )}
           </div>
-        </div>
-      )}
+      </div>
     </div>
   )
 }

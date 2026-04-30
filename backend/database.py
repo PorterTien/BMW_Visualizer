@@ -196,6 +196,100 @@ def migrate_db():
             ))
             conn.commit()
 
+    # ── Multi-list watchlist migration ────────────────────────────────────────
+    # 1. Create watchlist_lists table (idempotent via create_all above)
+    # 2. Add list_id column to watchlist
+    # 3. Migrate existing entries: create a default "My Watchlist" per user,
+    #    then point all their orphan entries at it.
+    # 4. Drop old unique index and create the new 3-column one.
+    with engine.connect() as conn:
+        if dialect == "sqlite":
+            wl_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(watchlist)"))}
+            if "list_id" not in wl_cols:
+                conn.execute(text("ALTER TABLE watchlist ADD COLUMN list_id INTEGER REFERENCES watchlist_lists(id) ON DELETE CASCADE"))
+                conn.commit()
+            # Migrate existing entries that have no list_id
+            from datetime import datetime, timezone
+            now = datetime.now(timezone.utc).isoformat()
+            # Distinct user_ids with un-assigned entries
+            orphan_users = conn.execute(
+                text("SELECT DISTINCT user_id FROM watchlist WHERE list_id IS NULL AND user_id IS NOT NULL")
+            ).fetchall()
+            for (uid,) in orphan_users:
+                existing_default = conn.execute(
+                    text("SELECT id FROM watchlist_lists WHERE user_id = :u AND name = 'My Watchlist'"),
+                    {"u": uid},
+                ).fetchone()
+                if existing_default:
+                    lid = existing_default[0]
+                else:
+                    conn.execute(
+                        text("INSERT INTO watchlist_lists (user_id, name, created_at) VALUES (:u, 'My Watchlist', :t)"),
+                        {"u": uid, "t": now},
+                    )
+                    conn.commit()
+                    lid = conn.execute(
+                        text("SELECT id FROM watchlist_lists WHERE user_id = :u AND name = 'My Watchlist'"),
+                        {"u": uid},
+                    ).fetchone()[0]
+                conn.execute(
+                    text("UPDATE watchlist SET list_id = :l WHERE user_id = :u AND list_id IS NULL"),
+                    {"l": lid, "u": uid},
+                )
+                conn.commit()
+            # Drop old unique index and create new one
+            conn.execute(text("DROP INDEX IF EXISTS ux_watchlist_user_company"))
+            conn.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_watchlist_user_company_list "
+                "ON watchlist (user_id, company_id, list_id)"
+            ))
+            conn.commit()
+        elif dialect == "postgresql":
+            pg_wl_cols = {
+                row[0] for row in conn.execute(text(
+                    "SELECT column_name FROM information_schema.columns WHERE table_name = 'watchlist'"
+                ))
+            }
+            if "list_id" not in pg_wl_cols:
+                conn.execute(text(
+                    "ALTER TABLE watchlist ADD COLUMN list_id INTEGER "
+                    "REFERENCES watchlist_lists(id) ON DELETE CASCADE"
+                ))
+                conn.commit()
+            from datetime import datetime, timezone
+            now = datetime.now(timezone.utc).isoformat()
+            orphan_users = conn.execute(
+                text("SELECT DISTINCT user_id FROM watchlist WHERE list_id IS NULL AND user_id IS NOT NULL")
+            ).fetchall()
+            for (uid,) in orphan_users:
+                existing_default = conn.execute(
+                    text("SELECT id FROM watchlist_lists WHERE user_id = :u AND name = 'My Watchlist'"),
+                    {"u": uid},
+                ).fetchone()
+                if existing_default:
+                    lid = existing_default[0]
+                else:
+                    conn.execute(
+                        text("INSERT INTO watchlist_lists (user_id, name, created_at) VALUES (:u, 'My Watchlist', :t)"),
+                        {"u": uid, "t": now},
+                    )
+                    conn.commit()
+                    lid = conn.execute(
+                        text("SELECT id FROM watchlist_lists WHERE user_id = :u AND name = 'My Watchlist'"),
+                        {"u": uid},
+                    ).fetchone()[0]
+                conn.execute(
+                    text("UPDATE watchlist SET list_id = :l WHERE user_id = :u AND list_id IS NULL"),
+                    {"l": lid, "u": uid},
+                )
+                conn.commit()
+            conn.execute(text("DROP INDEX IF EXISTS ux_watchlist_user_company"))
+            conn.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_watchlist_user_company_list "
+                "ON watchlist (user_id, company_id, list_id)"
+            ))
+            conn.commit()
+
     # Ensure filter-column indices exist (idempotent via IF NOT EXISTS)
     filter_indices = [
         ("ix_company_type", "companies", "company_type"),
@@ -204,6 +298,8 @@ def migrate_db():
         ("ix_company_hq_country", "companies", "company_hq_country"),
         ("ix_watchlist_user", "watchlist", "user_id"),
         ("ix_watchlist_company", "watchlist", "company_id"),
+        ("ix_watchlist_list", "watchlist", "list_id"),
+        ("ix_watchlist_lists_user", "watchlist_lists", "user_id"),
     ]
     with engine.connect() as conn:
         for idx_name, table, col in filter_indices:
