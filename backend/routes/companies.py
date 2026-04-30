@@ -24,7 +24,7 @@ def _log_task_error(task: asyncio.Task) -> None:
         log.error("Background task %s raised: %s", task.get_name(), task.exception())
 
 
-from backend._util import safe_json as _safe_json  # re-exported for existing callers
+from backend._util import safe_json as _safe_json, safe_float as _safe_float  # re-exported for existing callers
 
 
 def _company_dict(c: Company) -> dict:
@@ -34,8 +34,8 @@ def _company_dict(c: Company) -> dict:
         "company_hq_city": c.company_hq_city,
         "company_hq_state": c.company_hq_state,
         "company_hq_country": c.company_hq_country,
-        "company_hq_lat": c.company_hq_lat,
-        "company_hq_lng": c.company_hq_lng,
+        "company_hq_lat": _safe_float(c.company_hq_lat),
+        "company_hq_lng": _safe_float(c.company_hq_lng),
         "company_locations": _safe_json(c.company_locations, []),
         "company_type": c.company_type,
         "company_status": c.company_status,
@@ -43,10 +43,10 @@ def _company_dict(c: Company) -> dict:
         "supply_chain_segment": c.supply_chain_segment,
         "keywords": _safe_json(c.keywords, []),
         "announced_partners": _safe_json(c.announced_partners, []),
-        "number_of_employees": c.number_of_employees,
-        "market_cap_usd": c.market_cap_usd,
-        "revenue_usd": c.revenue_usd,
-        "total_funding_usd": c.total_funding_usd,
+        "number_of_employees": _safe_float(c.number_of_employees),
+        "market_cap_usd": _safe_float(c.market_cap_usd),
+        "revenue_usd": _safe_float(c.revenue_usd),
+        "total_funding_usd": _safe_float(c.total_funding_usd),
         "last_fundraise_date": c.last_fundraise_date,
         "company_website": c.company_website,
         "hq_company": c.hq_company,
@@ -194,8 +194,8 @@ def _company_dict_list(c: Company, partner_count: int) -> dict:
         "company_hq_city": c.company_hq_city,
         "company_hq_state": c.company_hq_state,
         "company_hq_country": c.company_hq_country,
-        "company_hq_lat": c.company_hq_lat,
-        "company_hq_lng": c.company_hq_lng,
+        "company_hq_lat": _safe_float(c.company_hq_lat),
+        "company_hq_lng": _safe_float(c.company_hq_lng),
         "company_locations": [],
         "company_type": c.company_type,
         "company_status": c.company_status,
@@ -204,10 +204,10 @@ def _company_dict_list(c: Company, partner_count: int) -> dict:
         "keywords": _safe_json(c.keywords, []),
         "announced_partners": [],
         "announced_partners_count": partner_count,
-        "number_of_employees": c.number_of_employees,
-        "market_cap_usd": c.market_cap_usd,
-        "revenue_usd": c.revenue_usd,
-        "total_funding_usd": c.total_funding_usd,
+        "number_of_employees": _safe_float(c.number_of_employees),
+        "market_cap_usd": _safe_float(c.market_cap_usd),
+        "revenue_usd": _safe_float(c.revenue_usd),
+        "total_funding_usd": _safe_float(c.total_funding_usd),
         "last_fundraise_date": c.last_fundraise_date,
         "company_website": c.company_website,
         "hq_company": c.hq_company,
@@ -387,13 +387,7 @@ def companies_network(db: Session = Depends(get_db)):
     virtual_id = -1
     seen_links: set[tuple] = set()
 
-    def _f(v):
-        if v is None:
-            return None
-        try:
-            return float(v)
-        except (TypeError, ValueError):
-            return None
+    _f = _safe_float
 
     for c in companies:
         key = _norm_company_name(c.company_name)

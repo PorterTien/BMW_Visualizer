@@ -6,6 +6,18 @@ through ``models`` or ``database``.
 from __future__ import annotations
 
 import json
+import math
+
+
+def safe_float(val) -> float | None:
+    """Return None for NaN/Inf floats that json.dumps would reject."""
+    if val is None:
+        return None
+    try:
+        f = float(val)
+        return None if (math.isnan(f) or math.isinf(f)) else f
+    except (TypeError, ValueError):
+        return None
 
 
 def safe_json(val: str | None, default):
