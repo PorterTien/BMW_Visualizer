@@ -84,6 +84,8 @@ async def _run_seed(force: bool):
         from backend.database import SessionLocal
         from backend.seed import import_bbd, import_gigafactory, import_naatbatt, import_pitchbook
 
+        from backend.fix_coords import run as fix_coords
+
         db = SessionLocal()
         try:
             await asyncio.get_event_loop().run_in_executor(None, import_naatbatt, db, force)
@@ -92,6 +94,8 @@ async def _run_seed(force: bool):
             await asyncio.get_event_loop().run_in_executor(None, import_pitchbook, db)
         finally:
             db.close()
+
+        await asyncio.get_event_loop().run_in_executor(None, fix_coords)
 
 
 async def _auto_seed():

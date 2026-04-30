@@ -33,6 +33,7 @@ def _run_watchlist_digest():
 def _run_refresh():
     from backend.database import SessionLocal
     from backend.seed import import_naatbatt
+    from backend.fix_coords import run as fix_coords
 
     log.info("Scheduled NAATBatt refresh starting…")
     db = SessionLocal()
@@ -43,6 +44,12 @@ def _run_refresh():
         log.error("Scheduled refresh failed: %s", e)
     finally:
         db.close()
+
+    log.info("Running coordinate fixes post-refresh…")
+    try:
+        fix_coords()
+    except Exception as e:
+        log.error("Coordinate fix failed: %s", e)
 
 
 def start_scheduler():
