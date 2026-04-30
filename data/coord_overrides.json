@@ -1,6 +1,0 @@
-{
-  "_comment": "Manual coordinate overrides for companies whose NAATBatt coordinates cannot be fixed automatically (wrong values, not just wrong sign). Keys must match company_name exactly. Re-applied on every fix_coords run.",
-  "Capgemini Engineering": { "lat": 48.8566, "lng": 2.3522 },
-  "e-Storage": { "lat": 43.4516, "lng": -80.4925 },
-  "Bobaek": { "lat": 36.8151, "lng": 127.1139 }
-}
