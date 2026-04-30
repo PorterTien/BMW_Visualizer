@@ -330,21 +330,7 @@ def parse_xlsx() -> dict[str, dict]:
                 if row_extra and not existing.get("extra_description"):
                     existing["extra_description"] = row_extra
 
-    # Geocode companies missing lat/lng
-    geocoded = 0
-    for data in companies.values():
-        if not data["company_hq_lat"] and data["company_hq_city"]:
-            lat, lng = _geocode_city(
-                data["company_hq_city"] or "",
-                data["company_hq_state"] or "",
-            )
-            if lat:
-                data["company_hq_lat"] = lat
-                data["company_hq_lng"] = lng
-                geocoded += 1
-            time.sleep(0.3)  # Nominatim rate limit (1 req/sec policy, but few calls needed)
-
-    log.info("Parsed %d unique companies (%d geocoded)", len(companies), geocoded)
+    log.info("Parsed %d unique companies", len(companies))
     return companies
 
 
@@ -371,7 +357,7 @@ def import_naatbatt(db, force_download: bool = False) -> dict:
         db.commit()
         return {"status": "failed", "error": str(e), "rows_added": 0, "rows_updated": 0}
 
-    added = updated = 0
+    added = updated = geocoded = 0
 
     for key, data in companies.items():
         locations = data.pop("locations", [])
@@ -383,6 +369,25 @@ def import_naatbatt(db, force_download: bool = False) -> dict:
             .filter(Company.company_name.ilike(data["company_name"]))
             .first()
         )
+
+        # Geocode only if XLSX had no coordinates AND the company isn't
+        # already in the DB with coordinates (avoids 300ms×N on every re-sync)
+        if not data.get("company_hq_lat") and data.get("company_hq_city"):
+            db_lat = existing.company_hq_lat if existing else None
+            if db_lat:
+                data["company_hq_lat"] = db_lat
+                data["company_hq_lng"] = existing.company_hq_lng
+            else:
+                lat, lng = _geocode_city(
+                    data["company_hq_city"] or "",
+                    data["company_hq_state"] or "",
+                )
+                if lat:
+                    data["company_hq_lat"] = lat
+                    data["company_hq_lng"] = lng
+                    geocoded += 1
+                time.sleep(0.3)
+
         if existing:
             # Only update NAATBatt-sourced fields; preserve AI-enriched ones
             for field in [
@@ -411,7 +416,7 @@ def import_naatbatt(db, force_download: bool = False) -> dict:
                 log.debug("Skipping duplicate company (naatbatt): %s", data.get("company_name"))
 
     db.commit()
-    log.info("Import complete: %d added, %d updated", added, updated)
+    log.info("Import complete: %d added, %d updated, %d geocoded", added, updated, geocoded)
 
     log_entry = SyncLog(
         source="naatbatt_xlsx",
