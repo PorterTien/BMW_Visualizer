@@ -129,20 +129,77 @@ def _load_overrides() -> dict[str, dict]:
 
 
 def _apply_overrides(db, dry_run: bool) -> int:
-    """Set override coords on HQ + all company locations/facilities."""
+    """Apply manual coordinate overrides from coord_overrides.json.
+
+    Default behavior (simple {lat,lng}) updates HQ only.
+    Optional controls:
+      - apply_to: "hq" | "locations" | "facilities" | "all" | [..]
+      - match: {"facility_name"|"city"|"state"|"country": "..."} for targeted non-HQ updates
+    """
     overrides = _load_overrides()
     if not overrides:
         return 0
+
+    def _norm(s: str) -> str:
+        return " ".join((s or "").strip().lower().split())
+
+    def _targets(value) -> set[str]:
+        if value is None:
+            return {"hq"}
+        if isinstance(value, str):
+            vals = {_norm(value)}
+        elif isinstance(value, list):
+            vals = {_norm(v) for v in value if isinstance(v, str)}
+        else:
+            return {"hq"}
+        if "all" in vals:
+            return {"hq", "locations", "facilities"}
+        out = {v for v in vals if v in {"hq", "locations", "facilities"}}
+        return out or {"hq"}
+
+    def _matches(match: dict | None, facility_name, city, state, country) -> bool:
+        if not match:
+            return True
+        checks = {
+            "facility_name": facility_name,
+            "city": city,
+            "state": state,
+            "country": country,
+        }
+        for k, expected in match.items():
+            if k not in checks or not isinstance(expected, str):
+                continue
+            if _norm(checks[k] or "") != _norm(expected):
+                return False
+        return True
+
+    companies = db.query(Company).all()
+    by_norm: dict[str, Company] = {}
+    for c in companies:
+        key = _norm(c.company_name or "")
+        if key and key not in by_norm:
+            by_norm[key] = c
+
     fixed = 0
     for name, coords in overrides.items():
+        if not isinstance(coords, dict) or "lat" not in coords or "lng" not in coords:
+            log.warning("OVERRIDE  invalid or missing lat/lng for %r", name)
+            continue
+
         co = db.query(Company).filter(Company.company_name == name).first()
+        if not co:
+            co = db.query(Company).filter(Company.company_name.ilike(name)).first()
+        if not co:
+            co = by_norm.get(_norm(name))
         if not co:
             log.warning("OVERRIDE  company not found: %r", name)
             continue
         new_lat, new_lng = coords["lat"], coords["lng"]
+        targets = _targets(coords.get("apply_to"))
+        match = coords.get("match") if isinstance(coords.get("match"), dict) else None
 
-        # 1) HQ coordinates
-        if co.company_hq_lat != new_lat or co.company_hq_lng != new_lng:
+        # 1) HQ coordinates (default behavior)
+        if "hq" in targets and (co.company_hq_lat != new_lat or co.company_hq_lng != new_lng):
             log.info(
                 "OVERRIDE HQ   %-41s  lat %s → %.4f  lng %s → %.4f",
                 name[:41],
@@ -154,49 +211,55 @@ def _apply_overrides(db, dry_run: bool) -> int:
                 co.company_hq_lng = new_lng
             fixed += 1
 
-        # 2) company_locations JSON points (map facility markers)
-        try:
-            locations = json.loads(co.company_locations) if co.company_locations else []
-        except (TypeError, ValueError):
-            locations = []
-        if isinstance(locations, list):
-            row_changed = False
-            for loc in locations:
-                if not isinstance(loc, dict):
+        # 2) company_locations JSON points (when explicitly requested)
+        if "locations" in targets:
+            try:
+                locations = json.loads(co.company_locations) if co.company_locations else []
+            except (TypeError, ValueError):
+                locations = []
+            if isinstance(locations, list):
+                row_changed = False
+                for loc in locations:
+                    if not isinstance(loc, dict):
+                        continue
+                    if not _matches(match, loc.get("facility_name"), loc.get("city"), loc.get("state"), loc.get("country")):
+                        continue
+                    if loc.get("lat") == new_lat and loc.get("lng") == new_lng:
+                        continue
+                    log.info(
+                        "OVERRIDE LOC  %-41s  facility=%-18s  lat %s → %.4f  lng %s → %.4f",
+                        name[:41],
+                        str(loc.get("facility_name") or loc.get("city") or "?")[:18],
+                        loc.get("lat"), new_lat,
+                        loc.get("lng"), new_lng,
+                    )
+                    if not dry_run:
+                        loc["lat"] = new_lat
+                        loc["lng"] = new_lng
+                    fixed += 1
+                    row_changed = True
+                if row_changed and not dry_run:
+                    co.company_locations = json.dumps(locations)
+
+        # 3) normalized company_facilities rows (when explicitly requested)
+        if "facilities" in targets:
+            facilities = db.query(CompanyFacility).filter(CompanyFacility.company_id == co.id).all()
+            for fac in facilities:
+                if not _matches(match, fac.facility_name, fac.city, fac.state, fac.country):
                     continue
-                if loc.get("lat") == new_lat and loc.get("lng") == new_lng:
+                if fac.lat == new_lat and fac.lng == new_lng:
                     continue
                 log.info(
-                    "OVERRIDE LOC  %-41s  facility=%-18s  lat %s → %.4f  lng %s → %.4f",
+                    "OVERRIDE FAC  %-41s  fac_id=%-6s  lat %s → %.4f  lng %s → %.4f",
                     name[:41],
-                    str(loc.get("facility_name") or loc.get("city") or "?")[:18],
-                    loc.get("lat"), new_lat,
-                    loc.get("lng"), new_lng,
+                    fac.id,
+                    fac.lat, new_lat,
+                    fac.lng, new_lng,
                 )
                 if not dry_run:
-                    loc["lat"] = new_lat
-                    loc["lng"] = new_lng
+                    fac.lat = new_lat
+                    fac.lng = new_lng
                 fixed += 1
-                row_changed = True
-            if row_changed and not dry_run:
-                co.company_locations = json.dumps(locations)
-
-        # 3) normalized company_facilities rows (if present)
-        facilities = db.query(CompanyFacility).filter(CompanyFacility.company_id == co.id).all()
-        for fac in facilities:
-            if fac.lat == new_lat and fac.lng == new_lng:
-                continue
-            log.info(
-                "OVERRIDE FAC  %-41s  fac_id=%-6s  lat %s → %.4f  lng %s → %.4f",
-                name[:41],
-                fac.id,
-                fac.lat, new_lat,
-                fac.lng, new_lng,
-            )
-            if not dry_run:
-                fac.lat = new_lat
-                fac.lng = new_lng
-            fixed += 1
     return fixed
 
 

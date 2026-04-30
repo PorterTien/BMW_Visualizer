@@ -18,6 +18,10 @@
   "Toyota Motor": { "lat": 35.0847, "lng": 137.1525 },
   "Daejin Advanced Materials": { "lat": 37.5665, "lng": 126.9780 },
   "Unitech": { "lat": 37.3219, "lng": 126.8309 },
-  "Minera y Metalúrgica del Boleo": { "lat": 27.3337, "lng": -112.3309},
+  "Minera y Metalúrgica del Boleo": {
+    "lat": 27.3337,
+    "lng": -112.3309,
+    "apply_to": ["locations", "facilities"],
+    "match": { "facility_name": "El Boleo Mine", "country": "Mexico" } },
   "Durapower": { "lat": 1.3236, "lng": 103.8739}
 }
