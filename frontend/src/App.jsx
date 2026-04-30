@@ -8,7 +8,7 @@ import ResearchPanel from './components/ResearchPanel'
 import WatchlistPanel from './components/WatchlistPanel'
 import CompanyDetailPage from './components/CompanyDetailPage'
 import SectorResearch from './components/SectorResearch'
-import { getSeedStatus, triggerSeed, getWatchlistDigest, getCompanies, getCompaniesMap, getCompaniesNetwork, getPartnershipGraph, setAuthToken } from './api/client'
+import { getSeedStatus, triggerSeed, getWatchlistDigest, getCompanies, getCompaniesMap, getCompaniesNetwork, getPartnershipGraph, setAuthToken, getSyncStatus, triggerSync } from './api/client'
 import { supabase } from './lib/supabase'
 
 export default function App() {
@@ -64,6 +64,40 @@ export default function App() {
   }, [panelWidth])
 
   const [watchlistBreaking, setWatchlistBreaking] = useState(0)
+  const [syncStatus, setSyncStatus] = useState(null)
+  const [syncing, setSyncing] = useState(false)
+
+  // Fetch sync status on load and refresh every 5 min
+  useEffect(() => {
+    function fetchSync() {
+      getSyncStatus().then(({ data }) => setSyncStatus(data)).catch(() => {})
+    }
+    fetchSync()
+    const iv = setInterval(fetchSync, 300000)
+    return () => clearInterval(iv)
+  }, [])
+
+  const handleSyncNow = useCallback(() => {
+    if (syncing) return
+    setSyncing(true)
+    triggerSync()
+      .then(() => {
+        // Poll until a new sync_log row appears (run_at changes)
+        const prev = syncStatus?.last_sync?.run_at
+        const poll = setInterval(() => {
+          getSyncStatus().then(({ data }) => {
+            setSyncStatus(data)
+            if (data?.last_sync?.run_at !== prev) {
+              clearInterval(poll)
+              setSyncing(false)
+            }
+          }).catch(() => {})
+        }, 4000)
+        // Give up polling after 10 min
+        setTimeout(() => { clearInterval(poll); setSyncing(false) }, 600000)
+      })
+      .catch(() => setSyncing(false))
+  }, [syncing, syncStatus])
 
   // Poll for breaking news badge in navbar
   useEffect(() => {
@@ -116,6 +150,9 @@ export default function App() {
         watchlistBreaking={watchlistBreaking}
         onOpenDataImport={() => setDataImportOpen(true)}
         user={session?.user ?? null}
+        syncStatus={syncStatus}
+        syncing={syncing}
+        onSyncNow={handleSyncNow}
       />
 
       {/* Seeding banner */}

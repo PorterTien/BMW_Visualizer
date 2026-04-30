@@ -9,7 +9,141 @@ const TABS = [
   { id: 'ai-research', label: 'AI Research' },
 ]
 
-export default function Navbar({ activeTab, setActiveTab, watchlistBreaking = 0, onOpenDataImport = () => {}, user = null }) {
+function SyncIcon({ spinning }) {
+  return (
+    <svg
+      className={`w-3 h-3 flex-shrink-0 ${spinning ? 'animate-spin' : ''}`}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M13.5 2.5A6.5 6.5 0 0 0 2 8" />
+      <path d="M2.5 13.5A6.5 6.5 0 0 0 14 8" />
+      <polyline points="2 2 2 6 6 6" />
+      <polyline points="14 14 14 10 10 10" />
+    </svg>
+  )
+}
+
+function formatSyncAge(runAt) {
+  if (!runAt) return null
+  const ms = Date.now() - new Date(runAt).getTime()
+  const minutes = Math.floor(ms / 60000)
+  const hours = Math.floor(ms / 3600000)
+  const days = Math.floor(ms / 86400000)
+  if (minutes < 2) return 'just now'
+  if (hours < 1) return `${minutes}m ago`
+  if (hours < 24) return `${hours}h ago`
+  if (days === 1) return 'yesterday'
+  return `${days}d ago`
+}
+
+function getDaysSince(runAt) {
+  if (!runAt) return null
+  return Math.floor((Date.now() - new Date(runAt).getTime()) / 86400000)
+}
+
+function SyncBadge({ syncStatus, syncing, onSyncNow }) {
+  const runAt = syncStatus?.last_sync?.run_at
+  const days = getDaysSince(runAt)
+  const age = formatSyncAge(runAt)
+
+  // Urgency levels
+  const urgency =
+    syncing ? 'syncing'
+    : days === null ? 'unknown'
+    : days < 14 ? 'ok'
+    : days < 30 ? 'warn'
+    : 'critical'
+
+  const label = syncing
+    ? 'Syncing…'
+    : days === null
+    ? 'Never synced'
+    : `Last synced ${age}`
+
+  if (urgency === 'ok') {
+    return (
+      <div className="flex items-center gap-2">
+        <span className="text-[11px] text-gray-400 whitespace-nowrap">{label}</span>
+        <button
+          onClick={onSyncNow}
+          title="Sync NAATBatt data now"
+          className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-bmw-blue border border-gray-200 hover:border-bmw-blue px-2 py-0.5 rounded transition-colors"
+        >
+          <SyncIcon spinning={false} />
+          <span>Sync</span>
+        </button>
+      </div>
+    )
+  }
+
+  if (urgency === 'syncing') {
+    return (
+      <div className="flex items-center gap-1.5 text-[11px] text-bmw-blue bg-blue-50 border border-blue-200 px-2.5 py-1 rounded-full">
+        <SyncIcon spinning={true} />
+        <span>Syncing…</span>
+      </div>
+    )
+  }
+
+  if (urgency === 'unknown') {
+    return (
+      <button
+        onClick={onSyncNow}
+        className="flex items-center gap-1.5 text-[11px] text-gray-500 hover:text-bmw-blue border border-gray-200 hover:border-bmw-blue px-2.5 py-1 rounded-full transition-colors"
+      >
+        <SyncIcon spinning={false} />
+        <span>Sync Now</span>
+      </button>
+    )
+  }
+
+  if (urgency === 'warn') {
+    return (
+      <button
+        onClick={onSyncNow}
+        title={`Last synced ${age} — click to sync now`}
+        className="flex items-center gap-1.5 text-[11px] font-medium text-amber-700 bg-amber-50 border border-amber-300 hover:bg-amber-100 px-2.5 py-1 rounded-full transition-colors whitespace-nowrap"
+      >
+        <svg className="w-3 h-3 flex-shrink-0" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 4a.75.75 0 0 1 .75.75v3a.75.75 0 0 1-1.5 0v-3A.75.75 0 0 1 8 5zm0 6.5a.875.875 0 1 1 0-1.75.875.875 0 0 1 0 1.75z"/>
+        </svg>
+        <span>{label}</span>
+        <span className="opacity-60">·</span>
+        <span>Sync Now</span>
+      </button>
+    )
+  }
+
+  // Critical — red throb
+  return (
+    <button
+      onClick={onSyncNow}
+      title={`Last synced ${age} — overdue! Click to sync now`}
+      className="animate-throb flex items-center gap-1.5 text-[11px] font-semibold text-white bg-red-500 hover:bg-red-600 px-3 py-1 rounded-full whitespace-nowrap transition-colors"
+    >
+      <SyncIcon spinning={false} />
+      <span className="animate-pulse-dim">{label}</span>
+      <span className="opacity-70">·</span>
+      <span>Sync Now</span>
+    </button>
+  )
+}
+
+export default function Navbar({
+  activeTab,
+  setActiveTab,
+  watchlistBreaking = 0,
+  onOpenDataImport = () => {},
+  user = null,
+  syncStatus = null,
+  syncing = false,
+  onSyncNow = () => {},
+}) {
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const dropdownRef = useRef(null)
 
@@ -63,8 +197,10 @@ export default function Navbar({ activeTab, setActiveTab, watchlistBreaking = 0,
           ))}
         </div>
 
-        {/* Right side: Data Import + auth */}
+        {/* Right side: Sync badge + Data Import + auth */}
         <div className="flex items-center gap-3 min-w-fit">
+          <SyncBadge syncStatus={syncStatus} syncing={syncing} onSyncNow={onSyncNow} />
+
           <button
             onClick={() => onOpenDataImport()}
             className="bg-bmw-blue hover:bg-[#3a88ee] text-white text-xs px-4 py-1.5 rounded font-medium transition-colors"
