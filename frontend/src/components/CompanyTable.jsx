@@ -291,11 +291,8 @@ export default function CompanyTable({ filters, onOpenCompany }) {
       )
     }
     if (filters.statuses.length) rows = rows.filter((c) => filters.statuses.includes(c.company_status))
-    if (filters.segments.length) {
-      rows = rows.filter((c) => {
-        const segs = (c.supply_chain_segment || '').split(' | ')
-        return filters.segments.some((seg) => segs.includes(seg))
-      })
+    if (filters.types.length) {
+      rows = rows.filter((c) => filters.types.includes(c.company_type))
     }
     if (filters.countries.length) {
       rows = rows.filter((c) => {

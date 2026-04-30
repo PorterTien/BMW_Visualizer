@@ -262,10 +262,7 @@ export default function CompanyMap({ filters, onSelectCompany, highlightName }) 
       if (!c.company_name?.toLowerCase().includes(q)) return false
     }
     if (filters.statuses.length && !filters.statuses.includes(c.company_status)) return false
-    if (filters.segments.length) {
-      const segs = (c.supply_chain_segment || '').split(' | ')
-      if (!filters.segments.some((seg) => segs.includes(seg))) return false
-    }
+    if (filters.types.length && !filters.types.includes(c.company_type)) return false
     if (filters.countries.length) {
       const hq = (c.company_hq_country || '').trim().toLowerCase()
       const fac = (c.facility_country || '').trim().toLowerCase()
