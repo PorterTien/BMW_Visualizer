@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session, load_only, selectinload
 
-from backend._util import safe_json as _safe_json
+from backend._util import safe_json as _safe_json, safe_float as _safe_float
 from backend.database import get_db, SessionLocal
 from backend.rate_limit import check_rate_limit
 from backend.models import (
@@ -706,15 +706,7 @@ def _build_partnership_graph(db: Session) -> dict:
         if key:
             company_name_map.setdefault(key, cid)
 
-    def _f(v):
-        """Coerce DB numeric values to plain Python float/int — PostgreSQL can
-        return Decimal for NUMERIC columns, which json.dumps can't serialize."""
-        if v is None:
-            return None
-        try:
-            return float(v)
-        except (TypeError, ValueError):
-            return None
+    _f = _safe_float
 
     # Gather metrics for percentile estimation — relevant companies only.
     metrics_by_company: dict[int, dict] = {}
@@ -913,7 +905,8 @@ def _parse_max_gwh(gwh_json: str | None) -> float | None:
         return None
     try:
         data = json.loads(gwh_json)
-        vals = [float(v) for v in data.values() if v]
+        vals = [_safe_float(v) for v in data.values() if v]
+        vals = [v for v in vals if v is not None]
         return max(vals) if vals else None
     except Exception:
         return None
