@@ -41,7 +41,6 @@ _US_COUNTRY_NAMES = {
     "united states", "usa", "us", "u.s.", "u.s.a.", "united states of america",
 }
 _CA_COUNTRY_NAMES = {"canada", "ca"}
-_MX_COUNTRY_NAMES = {"mexico", "méxico", "mx"}
 
 _US_STATE_ABBREVS = {
     "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
@@ -55,15 +54,15 @@ _CA_PROVINCE_ABBREVS = {
     "AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU", "ON", "PE", "QC", "SK", "YT",
 }
 
-# Loose bounding box covering CONUS + Alaska + Hawaii + Canada + Mexico + territories
-_NA_LAT_MIN, _NA_LAT_MAX = 14.0, 84.0
+# Loose bounding box covering CONUS + Alaska + Hawaii + Canada + territories
+_NA_LAT_MIN, _NA_LAT_MAX = 15.0, 84.0
 _NA_LNG_MIN, _NA_LNG_MAX = -180.0, -52.0
 
 
 def _is_north_america(country: str | None, state: str | None) -> bool:
     if country:
         c = country.strip().lower()
-        if c in _US_COUNTRY_NAMES or c in _CA_COUNTRY_NAMES or c in _MX_COUNTRY_NAMES:
+        if c in _US_COUNTRY_NAMES or c in _CA_COUNTRY_NAMES:
             return True
     if state:
         s = state.strip().upper()

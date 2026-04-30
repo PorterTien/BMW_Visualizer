@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from backend.database import get_db, init_db, migrate_db
 from backend.models import Company, SyncLog
 from backend.routes import companies, jobs, news, partnerships, sector_research, upload, watchlist
-from backend.scheduler import start_scheduler, stop_scheduler
+from backend.scheduler import get_next_run_time, start_scheduler, stop_scheduler
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
 log = logging.getLogger(__name__)
@@ -112,7 +112,6 @@ async def shutdown():
 def sync_status(db: Session = Depends(get_db)):
     last = db.query(SyncLog).order_by(SyncLog.run_at.desc()).first()
     return {
-        "running": _seed_lock.locked(),
         "last_sync": {
             "id": last.id,
             "source": last.source,
@@ -123,7 +122,7 @@ def sync_status(db: Session = Depends(get_db)):
         }
         if last
         else None,
-        "next_scheduled_run": None,
+        "next_scheduled_run": get_next_run_time(),
     }
 
 
