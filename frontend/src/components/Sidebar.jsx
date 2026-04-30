@@ -6,20 +6,6 @@ const STATUSES = [
   'Pilot Plant', 'Closed', 'Operational', 'Paused',
 ]
 
-const COMPANY_TYPES = [
-  'Raw Materials',
-  'Battery Grade Materials',
-  'Other Battery Components & Mat.',
-  'Electrode & Cell Manufacturing',
-  'Module-Pack Manufacturing',
-  'Recycling-Repurposing',
-  'Equipment',
-  'R&D',
-  'Services & Consulting',
-  'Modeling & Software',
-  'Distributors',
-  'Professional Services',
-]
 
 const COUNTRIES = [
   'United States', 'Germany', 'China', 'United Kingdom', 'Canada',
@@ -200,12 +186,7 @@ export default function Sidebar({ filters, setFilters, collapsed, setCollapsed, 
             selected={filters.statuses}
             onChange={(v) => setFilters((f) => ({ ...f, statuses: v }))}
           />
-          <DropdownFilter
-            label="Company Type"
-            options={COMPANY_TYPES}
-            selected={filters.types}
-            onChange={(v) => setFilters((f) => ({ ...f, types: v }))}
-          />
+
           <DropdownFilter
             label="Country"
             options={COUNTRIES}
