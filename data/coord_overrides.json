@@ -23,5 +23,11 @@
     "lng": -112.3309,
     "apply_to": ["locations", "facilities"],
     "match": { "facility_name": "El Boleo Mine", "country": "Mexico" } },
-  "Durapower": { "lat": 1.3236, "lng": 103.8739}
+  "Durapower": { "lat": 1.3236, "lng": 103.8739},
+  "Arevon Energy": {
+    "lat": 32.9628,
+    "lng": -117.0361,
+    "apply_to": ["locations"],
+    "match": { "city": "Poway", "state": "CA", "country": "US" }
+  }
 }
