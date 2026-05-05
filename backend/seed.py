@@ -849,6 +849,8 @@ def import_pitchbook(db) -> dict:
 
 if __name__ == "__main__":
     init_db()
+    from backend.database import migrate_db
+    migrate_db()
     db = SessionLocal()
     try:
         count = db.query(Company).count()
