@@ -968,21 +968,13 @@ async def research_company_endpoint(req: ResearchRequest, request: Request, db: 
                 None, search_company_news, req.company_name
             )
 
-            # Upsert company
+            # Only insert company if it does not already exist in the DB
             existing = inner_db.query(Company).filter(
                 Company.company_name.ilike(req.company_name)
             ).first()
             ts = datetime.now(timezone.utc).isoformat()
             if existing:
-                overrides = set(_safe_json(existing.manual_overrides, []))
-                for field, val in result.items():
-                    if val is not None and field not in ("company_name", "error") and field not in overrides:
-                        if isinstance(val, (list, dict)):
-                            val = json.dumps(val)
-                        setattr(existing, field, val)
-                existing.last_updated = ts
-                existing.last_researched = ts
-                existing.data_source = "ai_research"
+                pass
             else:
                 company_data = {k: (json.dumps(v) if isinstance(v, (list, dict)) else v)
                                 for k, v in result.items() if k != "error"}
