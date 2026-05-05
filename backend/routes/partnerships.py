@@ -870,57 +870,15 @@ def _build_partnership_graph(db: Session) -> dict:
                     "scope": p.get("scale"),
                 })
 
-    # Track connected nodes
+    # Only keep nodes that appear in at least one link.
     connected_ids = set()
     for link in links:
         connected_ids.add(link["source"])
         connected_ids.add(link["target"])
 
-    # Add extra battery companies from core datasets even if they have no partnerships
-    already_node_ids = {n["id"] for n in nodes}
-    extra_companies = (
-        db.query(Company)
-        .options(load_only(*_GRAPH_COMPANY_COLS))
-        .filter(
-            Company.data_source.in_(_BATTERY_SOURCES),
-            Company.id.notin_(already_node_ids),
-            or_(
-                Company.number_of_employees.isnot(None),
-                Company.market_cap_usd.isnot(None),
-                Company.company_hq_lat.isnot(None),
-                Company.company_type.isnot(None),
-            ),
-        )
-        .limit(1000)
-        .all()
-    )
-    for c in extra_companies:
-        if c.id in id_alias:
-            continue
-        already_node_ids.add(c.id)
-        nodes.append({
-            "id": c.id,
-            "name": c.company_name,
-            "type": c.company_type,
-            "industry_segment": c.industry_segment or c.supply_chain_segment,
-            "market_cap_usd": _f(c.market_cap_usd),
-            "revenue_usd": _f(c.revenue_usd),
-            "employee_count": int(c.number_of_employees) if c.number_of_employees is not None else None,
-            "total_funding_usd": _f(c.total_funding_usd),
-            "manufacturing_capacity_gwh": _f(_parse_max_gwh(c.gwh_capacity)),
-            "patent_count": None,
-            "funding_raised": None,
-            "production_volume": None,
-            "partnership_investment_total": None,
-            "percentile": 10,
-            "in_db": True,
-        })
-
-    # Keep virtual nodes only if they appear in a link; real DB nodes always show.
     node_ids = {n["id"] for n in nodes}
-    links = [l for l in links if l["source"] in node_ids and l["target"] in node_ids]
-    # Remove virtual nodes with no links
-    nodes = [n for n in nodes if n["in_db"] is not False or n["id"] in connected_ids]
+    links = [lnk for lnk in links if lnk["source"] in node_ids and lnk["target"] in node_ids]
+    nodes = [n for n in nodes if n["id"] in connected_ids]
 
     return {"nodes": nodes, "links": links}
 
