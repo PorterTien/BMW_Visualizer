@@ -85,7 +85,6 @@ async def _run_seed(force: bool):
         from backend.seed import import_bbd, import_gigafactory, import_naatbatt, import_pitchbook
 
         from backend.fix_coords import run as fix_coords
-        from backend.prune_investors import prune_investors
 
         db = SessionLocal()
         try:
@@ -97,14 +96,6 @@ async def _run_seed(force: bool):
             db.close()
 
         await asyncio.get_event_loop().run_in_executor(None, fix_coords)
-
-        db2 = SessionLocal()
-        try:
-            result = await asyncio.get_event_loop().run_in_executor(None, prune_investors, db2)
-            log.info("prune_investors: deleted %d investor companies, pruned %d partnerships",
-                     result['deleted'], result['partnerships_pruned'])
-        finally:
-            db2.close()
 
 
 async def _auto_seed():
@@ -141,12 +132,6 @@ async def trigger_naatbatt_sync():
     t.add_done_callback(_log_task_error)
     return {"status": "sync_started"}
 
-
-@app.post("/api/sync/prune-investors")
-def trigger_prune_investors(db: Session = Depends(get_db)):
-    from backend.prune_investors import prune_investors
-    result = prune_investors(db)
-    return result
 
 
 # Seed endpoints
