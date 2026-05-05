@@ -57,7 +57,8 @@ async def upload_csv(file: UploadFile = File(...), db: Session = Depends(get_db)
     names. Every other column is ignored. The accepted names are recorded in
     the upload manifest; we then prune the Company table down to just the
     union of names that manifest has ever seen, so the table mirrors what
-    the user has uploaded."""
+    the user has uploaded. A background AI enrichment job classifies any
+    companies missing a company_type."""
     if not file.filename.endswith((".csv", ".xlsx")):
         raise HTTPException(400, "Only CSV or XLSX files are supported.")
     path = _save_file(file)
@@ -75,11 +76,24 @@ async def upload_csv(file: UploadFile = File(...), db: Session = Depends(get_db)
     dedupe_summary = dedupe_companies(db)
     prune_summary = prune_to_uploaded_names(db)
 
+    enrich_job = ResearchJob(
+        job_type="enrich",
+        status="pending",
+        target=file.filename,
+        created_at=ts,
+        updated_at=ts,
+    )
+    db.add(enrich_job)
+    db.commit()
+    db.refresh(enrich_job)
+    asyncio.create_task(_enrich_companies_bg(enrich_job.id, ts)).add_done_callback(_log_task_error)
+
     return {
         "added": ins["added"],
         "updated": ins["updated"],
         "names_in_file": len(names),
         "filename": file.filename,
+        "enrich_job_id": enrich_job.id,
         "dedupe": dedupe_summary,
         "prune": prune_summary,
     }
@@ -205,55 +219,6 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
     asyncio.create_task(_run()).add_done_callback(_log_task_error)
     return {"job_id": job_id, "filename": filename}
 
-
-
-@router.post("/partnerships")
-async def upload_partnerships(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    """Legacy PitchBook/Crunchbase endpoint — now first-column-only, same as
-    ``/csv``. Kept so existing frontend buttons still work."""
-    if not file.filename.endswith((".csv", ".xlsx")):
-        raise HTTPException(400, "Only CSV or XLSX files are supported.")
-    path = _save_file(file)
-    try:
-        names = read_first_column(path)
-    except Exception as e:
-        raise HTTPException(400, f"Failed to parse file: {e}")
-
-    ts = datetime.now(timezone.utc).isoformat()
-    ins = upsert_names(db, names, ts)
-    db.commit()
-
-    record_uploaded_names(names)
-
-    dedupe_summary = dedupe_companies(db)
-    prune_summary = prune_to_uploaded_names(db)
-
-    # Kick off background AI enrichment for companies missing company_type.
-    enrich_job = ResearchJob(
-        job_type="pitchbook_enrich",
-        status="pending",
-        target=file.filename,
-        created_at=ts,
-        updated_at=ts,
-    )
-    db.add(enrich_job)
-    db.commit()
-    db.refresh(enrich_job)
-    enrich_job_id = enrich_job.id
-    asyncio.create_task(_enrich_companies_bg(enrich_job_id, ts)).add_done_callback(_log_task_error)
-
-    return {
-        "source": "First Column Ingest",
-        "format": "first_column",
-        "companies_added": ins["added"],
-        "companies_updated": ins["updated"],
-        "partnerships_added": 0,
-        "names_in_file": len(names),
-        "filename": file.filename,
-        "enrich_job_id": enrich_job_id,
-        "dedupe": dedupe_summary,
-        "prune": prune_summary,
-    }
 
 
 # ── Background AI enrichment ────────────────────────────────────────────────

@@ -30,7 +30,22 @@ def get_user_id(authorization: str | None) -> str | None:
     if not token:
         return None
 
-    # Method 1: verify via Supabase REST API (no secret needed locally)
+    # Method 1: local JWT verification (instant, no network call)
+    if SUPABASE_JWT_SECRET:
+        try:
+            payload = jwt.decode(
+                token,
+                SUPABASE_JWT_SECRET,
+                algorithms=["HS256"],
+                options={"verify_aud": False},
+            )
+            uid = payload.get("sub")
+            log.info("AUTH: verified via jwt, uid=%s", uid)
+            return uid
+        except Exception as exc:
+            log.info("AUTH: jwt error: %s", exc)
+
+    # Method 2: fallback to Supabase REST API (slower, ~100-500ms network round-trip)
     if SUPABASE_URL and SUPABASE_ANON_KEY:
         try:
             resp = httpx.get(
@@ -45,21 +60,6 @@ def get_user_id(authorization: str | None) -> str | None:
                 return uid
         except Exception as exc:
             log.info("AUTH: supabase api error: %s", exc)
-
-    # Method 2: verify JWT locally with the project secret
-    if SUPABASE_JWT_SECRET:
-        try:
-            payload = jwt.decode(
-                token,
-                SUPABASE_JWT_SECRET,
-                algorithms=["HS256"],
-                options={"verify_aud": False},
-            )
-            uid = payload.get("sub")
-            log.info("AUTH: verified via jwt, uid=%s", uid)
-            return uid
-        except Exception as exc:
-            log.info("AUTH: jwt error: %s", exc)
 
     log.info("AUTH: all methods failed — no supabase config or invalid token")
     return None

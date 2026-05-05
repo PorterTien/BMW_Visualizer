@@ -18,6 +18,21 @@ NAATBATT_LOCAL_PATH = os.path.join(
     "data", "naatbatt_latest.xlsx",
 )
 
+_SUPABASE_URL = os.getenv("VITE_SUPABASE_URL") or os.getenv("SUPABASE_URL", "")
+_STORAGE_BASE = f"{_SUPABASE_URL}/storage/v1/object/public/seed-data" if _SUPABASE_URL else ""
+
+BBD_URL = os.getenv("BBD_URL", f"{_STORAGE_BASE}/bbd_data.xlsx" if _STORAGE_BASE else "")
+BBD_LOCAL_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "data", "bbd_data.xlsx",
+)
+
+GIGAFACTORY_URL = os.getenv("GIGAFACTORY_URL", f"{_STORAGE_BASE}/gigafactory_db.xlsx" if _STORAGE_BASE else "")
+GIGAFACTORY_LOCAL_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "data", "gigafactory_db.xlsx",
+)
+
 CLAUDE_MODEL = "claude-sonnet-4-6"
 
 VALID_SHEETS = [

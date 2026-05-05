@@ -84,11 +84,7 @@ export const uploadDocument = (file) => {
   form.append('file', file)
   return api.post('/upload/document', form)
 }
-export const uploadPartnerships = (file) => {
-  const form = new FormData()
-  form.append('file', file)
-  return api.post('/upload/partnerships', form)
-}
+
 
 // Jobs
 export const getJob = (id) => api.get(`/jobs/${id}`)

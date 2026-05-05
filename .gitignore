@@ -5,6 +5,7 @@ __pycache__/
 .env
 *.db
 uploads/
+data/*.xlsx
 .gstack/
 dist/
 frontend/node_modules/

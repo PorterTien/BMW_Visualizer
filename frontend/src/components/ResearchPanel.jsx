@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { uploadCSV, uploadPartnerships } from '../api/client'
+import { uploadCSV } from '../api/client'
 
 function useUploadProgress(uploading) {
   const [progress, setProgress] = useState({ pct: 0, label: 'Preparing…' })
@@ -13,11 +13,9 @@ function useUploadProgress(uploading) {
     }
     const steps = [
       { pct: 10, label: 'Reading file…' },
-      { pct: 25, label: 'Detecting format…' },
-      { pct: 40, label: 'Loading existing data…' },
-      { pct: 60, label: 'Importing companies…' },
-      { pct: 75, label: 'Linking partnerships…' },
-      { pct: 90, label: 'Saving to database…' },
+      { pct: 30, label: 'Loading existing data…' },
+      { pct: 55, label: 'Importing companies…' },
+      { pct: 80, label: 'Saving to database…' },
       { pct: 96, label: 'Almost done…' },
     ]
     let i = 0
@@ -110,10 +108,6 @@ export default function ResearchPanel() {
   const [csvResult, setCsvResult] = useState(null)
   const csvProgress = useUploadProgress(csvUploading)
 
-  const [pbUploading, setPbUploading] = useState(false)
-  const [pbResult, setPbResult] = useState(null)
-  const pbProgress = useUploadProgress(pbUploading)
-
   async function handleCsvUpload(file) {
     setCsvUploading(true)
     setCsvResult(null)
@@ -126,46 +120,16 @@ export default function ResearchPanel() {
     setCsvUploading(false)
   }
 
-  async function handlePbUpload(file) {
-    setPbUploading(true)
-    setPbResult(null)
-    try {
-      const { data } = await uploadPartnerships(file)
-      setPbResult(data)
-    } catch (e) {
-      setPbResult({ error: e.response?.data?.detail || e.message })
-    }
-    setPbUploading(false)
-  }
-
   return (
     <div className="flex-1 px-8 pt-6 pb-4 bg-bmw-gray-light overflow-hidden">
       <div className="max-w-3xl mx-auto space-y-6">
 
-        {/* CSV / XLSX */}
         <div className="bg-white rounded-xl border border-[#DDE4EA] p-6">
           <h3 className="font-semibold text-[text-bmw-text-primary] mb-1">Companies Spreadsheet</h3>
-          <p className="text-xs text-gray-500 mb-4">Import a CSV or XLSX with company records. New companies are added; existing ones are updated.</p>
+          <p className="text-xs text-gray-500 mb-4">Import a CSV or XLSX with company names. New companies are added; existing ones are updated. AI will automatically classify any companies missing a type.</p>
           <DropZone label="CSV or XLSX file" accept=".csv,.xlsx" onUpload={handleCsvUpload} uploading={csvUploading} progress={csvProgress} />
           <ResultBanner result={csvResult} onDismiss={() => setCsvResult(null)} />
         </div>
-
-        {/* PitchBook / Crunchbase */}
-        <div className="bg-white rounded-xl border border-[#DDE4EA] p-6">
-          <h3 className="font-semibold text-[text-bmw-text-primary] mb-1">PitchBook / Crunchbase Export</h3>
-          <p className="text-xs text-gray-500 mb-2">
-            Drop a company list, deals sheet, or funding rounds export. Format is auto-detected and partnerships are linked into the network graph.
-          </p>
-          <div className="text-xs text-gray-400 mb-4 grid grid-cols-2 gap-x-4 gap-y-0.5">
-            <span>· PitchBook — Company List</span>
-            <span>· PitchBook — Deals</span>
-            <span>· Crunchbase — Organizations</span>
-            <span>· Crunchbase — Funding Rounds</span>
-          </div>
-          <DropZone label=".csv or .xlsx export" accept=".csv,.xlsx" onUpload={handlePbUpload} uploading={pbUploading} progress={pbProgress} />
-          <ResultBanner result={pbResult} onDismiss={() => setPbResult(null)} />
-        </div>
-
 
       </div>
     </div>

@@ -226,10 +226,6 @@ Return ONLY valid JSON with this structure:
 }"""
 
 
-def _strip_emojis(text: str) -> str:
-    return re.sub(r'[\U0001F000-\U0001FFFF\u2600-\u27BF\U0001FA00-\U0001FFFF]', '', text)
-
-
 def _claude_json(system: str, user: str) -> dict | list:
     client = _get_anthropic()
     msg = client.messages.create(

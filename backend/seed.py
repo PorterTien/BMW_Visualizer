@@ -1,7 +1,9 @@
 """
-NAATBatt XLSX importer.
+Seed importers for NAATBatt, BBD, and Gigafactory datasets.
+All three download their source files from remote URLs (Supabase Storage for
+BBD/Gigafactory, NREL for NAATBatt) and cache them locally under data/.
 Run directly: python backend/seed.py
-Or call import_naatbatt(db, force=True) from routes.
+Or call import_naatbatt/import_bbd/import_gigafactory(db) from routes.
 """
 from __future__ import annotations
 
@@ -21,7 +23,12 @@ import pandas as pd
 # Allow running as a script from repo root
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from backend.config import NAATBATT_LOCAL_PATH, NAATBATT_URL, VALID_COUNTRIES
+from backend.config import (
+    BBD_LOCAL_PATH, BBD_URL,
+    GIGAFACTORY_LOCAL_PATH, GIGAFACTORY_URL,
+    NAATBATT_LOCAL_PATH, NAATBATT_URL,
+    VALID_COUNTRIES,
+)
 from backend.database import SessionLocal, init_db
 from sqlalchemy.exc import IntegrityError
 from backend.models import Company, Partnership, PartnershipMember, SyncLog
@@ -83,6 +90,25 @@ def download_xlsx(force: bool = False) -> bool:
     if old_hash == new_hash:
         log.info("Downloaded file is identical to cached version — no change.")
         return False
+    log.info("Downloaded %d bytes → %s", len(r.content), path)
+    return True
+
+
+def _download_file(url: str, local_path: str, force: bool = False) -> bool:
+    """Download any seed file from a remote URL, cache locally. Returns True if refreshed."""
+    if not url:
+        log.warning("No URL configured for %s — skipping download.", local_path)
+        return False
+    path = Path(local_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists() and not force:
+        log.info("Cached file found at %s — skipping download.", path)
+        return False
+    log.info("Downloading %s from %s …", path.name, url)
+    with httpx.Client(timeout=120, follow_redirects=True) as client:
+        r = client.get(url)
+        r.raise_for_status()
+    path.write_bytes(r.content)
     log.info("Downloaded %d bytes → %s", len(r.content), path)
     return True
 
@@ -432,9 +458,6 @@ def import_naatbatt(db, force_download: bool = False) -> dict:
 
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
-BBD_LOCAL_PATH = str(_PROJECT_ROOT / "data" / "bbd_data.xlsx")
-GIGAFACTORY_LOCAL_PATH = str(_PROJECT_ROOT / "data" / "gigafactory_db.xlsx")
-
 SUPPLY_CHAIN_COLS = [
     "Raw Materials", "Battery Grade Materials",
     "Other Battery Components & Materials",
@@ -456,8 +479,9 @@ CHEMISTRY_COLS = [
 ]
 
 
-def import_bbd(db) -> dict:
-    """Import BBD (Volta Foundation) battery company data from bbd_data.xlsx."""
+def import_bbd(db, force_download: bool = False) -> dict:
+    """Import BBD (Volta Foundation) battery company data. Downloads from Supabase Storage if needed."""
+    _download_file(BBD_URL, BBD_LOCAL_PATH, force=force_download)
     path = Path(BBD_LOCAL_PATH)
     if not path.exists():
         log.warning("BBD file not found at %s — skipping.", path)
@@ -545,8 +569,9 @@ GWH_COL_MAP = {"2022": "Current GWh capacity 2022"}  # first year has a differen
 SECTION_HEADERS = {"asia pacific", "europe", "north america"}
 
 
-def import_gigafactory(db) -> dict:
-    """Import gigafactory battery cell plant data from gigafactory_db.xlsx."""
+def import_gigafactory(db, force_download: bool = False) -> dict:
+    """Import gigafactory battery cell plant data. Downloads from Supabase Storage if needed."""
+    _download_file(GIGAFACTORY_URL, GIGAFACTORY_LOCAL_PATH, force=force_download)
     path = Path(GIGAFACTORY_LOCAL_PATH)
     if not path.exists():
         log.warning("Gigafactory file not found at %s — skipping.", path)

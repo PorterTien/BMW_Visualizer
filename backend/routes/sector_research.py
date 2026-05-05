@@ -417,7 +417,8 @@ def _run_company_research(company_name: str):
                     if isinstance(val, (list, dict)):
                         val = json.dumps(val)
                     setattr(existing, field, val)
-            existing.last_updated = now[:10]
+            existing.last_updated = now
+            existing.last_researched = now
             existing.data_source = "ai_research"
         else:
             company_data = {
@@ -425,7 +426,8 @@ def _run_company_research(company_name: str):
                 for k, v in result.items()
                 if k != "error" and k in valid_columns
             }
-            company_data["last_updated"] = now[:10]
+            company_data["last_updated"] = now
+            company_data["last_researched"] = now
             existing = Company(**company_data)
             db.add(existing)
 
