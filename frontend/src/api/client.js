@@ -118,6 +118,8 @@ export const getSectorJob = (jobId) => api.get(`/sector-research/jobs/${jobId}`)
 export const verifySectorUrls = (urls) => api.post('/sector-research/verify-urls', { urls })
 export const approveSectorResearch = (companies, news) =>
   api.post('/sector-research/approve', { companies, news })
+export const chatWithSector = (message, category, companies, news) =>
+  api.post('/sector-research/chat', { message, category, companies, news })
 
 // Sync/Seed
 export const getSyncStatus = () => api.get('/sync/status')

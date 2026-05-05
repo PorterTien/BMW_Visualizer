@@ -410,9 +410,10 @@ def _run_company_research(company_name: str):
             Company.company_name.ilike(company_name)
         ).first()
 
+        valid_columns = {c.key for c in Company.__table__.columns}
         if existing:
             for field, val in result.items():
-                if val is not None and field not in ("company_name", "error"):
+                if val is not None and field not in ("company_name", "error") and field in valid_columns:
                     if isinstance(val, (list, dict)):
                         val = json.dumps(val)
                     setattr(existing, field, val)
@@ -422,7 +423,7 @@ def _run_company_research(company_name: str):
             company_data = {
                 k: (json.dumps(v) if isinstance(v, (list, dict)) else v)
                 for k, v in result.items()
-                if k != "error"
+                if k != "error" and k in valid_columns
             }
             company_data["last_updated"] = now[:10]
             existing = Company(**company_data)
@@ -469,13 +470,89 @@ def _run_company_research(company_name: str):
 
 
 @router.post("/approve")
-def approve_research(req: ApproveRequest, background_tasks: BackgroundTasks):
-    names = [
-        c.get("company_name", "").strip()
-        for c in req.companies
-        if c.get("company_name", "").strip()
-    ]
+def approve_research(req: ApproveRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    now = _now()
+    names = [c.get("company_name", "").strip() for c in req.companies if c.get("company_name", "").strip()]
+    company_by_name = {c.get("company_name", "").strip(): c for c in req.companies if c.get("company_name", "").strip()}
+
     for name in names:
+        stub_data = company_by_name[name]
+        existing = db.query(Company).filter(Company.company_name.ilike(name)).first()
+        if existing:
+            existing.company_type = stub_data.get("company_type") or existing.company_type
+            existing.company_status = stub_data.get("company_status") or existing.company_status
+            existing.company_hq_city = stub_data.get("company_hq_city") or existing.company_hq_city
+            existing.company_hq_state = stub_data.get("company_hq_state") or existing.company_hq_state
+            existing.company_website = stub_data.get("company_website") or existing.company_website
+            existing.summary = stub_data.get("summary") or existing.summary
+            existing.data_source = "ai_research"
+            existing.last_updated = now[:10]
+        else:
+            db.add(Company(
+                company_name=name,
+                company_type=stub_data.get("company_type"),
+                company_status=stub_data.get("company_status"),
+                company_hq_city=stub_data.get("company_hq_city"),
+                company_hq_state=stub_data.get("company_hq_state"),
+                company_website=stub_data.get("company_website"),
+                summary=stub_data.get("summary"),
+                data_source="ai_research",
+                last_updated=now[:10],
+            ))
+        try:
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            log.error("Failed to upsert stub for %r: %s", name, e)
+
         background_tasks.add_task(_run_company_research, name)
 
     return {"queued": len(names), "company_names": names}
+
+
+class SectorChatRequest(BaseModel):
+    message: str
+    category: str = ""
+    companies: list = []
+    news: list = []
+
+
+@router.post("/chat")
+async def chat_sector(req: SectorChatRequest):
+    from backend.ai_research import _get_anthropic
+    from backend.config import CLAUDE_MODEL
+
+    company_lines = "\n".join(
+        f"- {c.get('company_name', '?')} ({c.get('company_type', '?')}, {c.get('company_hq_city') or c.get('company_hq_state') or 'unknown location'}): {c.get('summary', '')}"
+        for c in req.companies[:20]
+    )
+    context = f"Category: {req.category or 'Battery supply chain'}\n\nDiscovered companies:\n{company_lines or 'None yet'}"
+
+    search_query = f"battery {req.category} {req.message}"
+    try:
+        web_results = await asyncio.get_event_loop().run_in_executor(
+            None, perplexity_search, search_query
+        )
+    except Exception:
+        web_results = ""
+
+    client = _get_anthropic()
+    msg = client.messages.create(
+        model=CLAUDE_MODEL,
+        max_tokens=1024,
+        system=(
+            "You are a battery industry analyst assistant for BMW. "
+            "Answer questions about battery supply chain sectors, companies, and trends. "
+            "Use the research context and web results provided. "
+            "Use markdown for structure when helpful."
+        ),
+        messages=[{
+            "role": "user",
+            "content": (
+                f"Research context:\n{context}\n\n"
+                f"Fresh web search results:\n{web_results}\n\n"
+                f"User question: {req.message}"
+            ),
+        }],
+    )
+    return {"response": msg.content[0].text}

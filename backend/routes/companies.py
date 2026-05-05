@@ -842,6 +842,7 @@ _EDITABLE_FIELDS = {
     "company_website", "crunchbase_url", "linkedin_url", "pitchbook_url",
     "notes", "summary", "long_description", "contact_name", "contact_email",
     "contact_phone", "company_hq_city", "company_hq_state", "company_hq_country",
+    "company_hq_lat", "company_hq_lng",
     "industry_segment", "company_type", "company_status", "chemistries",
     "founding_year", "number_of_employees", "hq_company", "hq_company_website",
     "feedstock", "description",
@@ -976,8 +977,9 @@ async def research_company_endpoint(req: ResearchRequest, request: Request, db: 
             if existing:
                 pass
             else:
+                valid_cols = {c.key for c in Company.__table__.columns}
                 company_data = {k: (json.dumps(v) if isinstance(v, (list, dict)) else v)
-                                for k, v in result.items() if k != "error"}
+                                for k, v in result.items() if k != "error" and k in valid_cols}
                 company_data["last_updated"] = ts
                 company_data["last_researched"] = ts
                 existing = Company(**company_data)
@@ -1318,9 +1320,10 @@ async def bulk_research(req: BulkResearchRequest, request: Request, db: Session 
 
                 company = inner_db.query(Company).filter(Company.company_name.ilike(company_name)).first()
                 if company:
+                    valid_cols = {c.key for c in Company.__table__.columns}
                     overrides = set(_safe_json(company.manual_overrides, []))
                     for field, val in result.items():
-                        if val is not None and field not in ("company_name", "error") and field not in overrides:
+                        if val is not None and field not in ("company_name", "error") and field not in overrides and field in valid_cols:
                             setattr(company, field, json.dumps(val) if isinstance(val, (list, dict)) else val)
                     company.last_updated = ts
                     company.last_researched = ts

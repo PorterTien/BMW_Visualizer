@@ -5,6 +5,7 @@ import {
   getSectorJob,
   verifySectorUrls,
   approveSectorResearch,
+  chatWithSector,
 } from '../api/client'
 
 // ── Utility ──────────────────────────────────────────────────────────────────
@@ -199,7 +200,11 @@ export default function SectorResearch() {
   const [approving, setApproving] = useState(false)
   const [approvalResult, setApprovalResult] = useState(null)
   const [error, setError] = useState(null)
+  const [chatMessages, setChatMessages] = useState([])
+  const [chatInput, setChatInput] = useState('')
+  const [chatLoading, setChatLoading] = useState(false)
   const pollRef = useRef(null)
+  const chatBottomRef = useRef(null)
 
   useEffect(() => {
     getSectorCategories()
@@ -235,6 +240,25 @@ export default function SectorResearch() {
     }, 3000)
     return () => clearInterval(pollRef.current)
   }, [jobId])
+
+  useEffect(() => {
+    chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [chatMessages])
+
+  async function handleChatSend() {
+    const msg = chatInput.trim()
+    if (!msg || chatLoading) return
+    setChatInput('')
+    setChatMessages(prev => [...prev, { role: 'user', text: msg }])
+    setChatLoading(true)
+    try {
+      const { data } = await chatWithSector(msg, category, companies, news)
+      setChatMessages(prev => [...prev, { role: 'assistant', text: data.response }])
+    } catch {
+      setChatMessages(prev => [...prev, { role: 'assistant', text: 'Error getting response.' }])
+    }
+    setChatLoading(false)
+  }
 
   async function handleRun() {
     if (!category) return
@@ -373,7 +397,7 @@ export default function SectorResearch() {
             <span className="flex-shrink-0 font-bold">✓</span>
             <span>
               Queued <strong>{approvalResult.queued}</strong> compan{approvalResult.queued === 1 ? 'y' : 'ies'} for full AI enrichment.
-              Each will be researched in the background — check the Company Table in a few minutes.
+              Check the Company Table in a few minutes.
             </span>
           </div>
         )}
@@ -500,6 +524,54 @@ export default function SectorResearch() {
             </div>
           </div>
         )}
+
+        {/* Chat — always visible at bottom */}
+        <div className="px-6 py-4 border-t border-bmw-border">
+          <h3 className="text-sm font-medium text-gray-500 uppercase mb-3">
+            Ask AI about {category || 'battery supply chain'}
+          </h3>
+          {chatMessages.length > 0 && (
+            <div className="space-y-3 max-h-96 overflow-y-auto pr-1 mb-3">
+              {chatMessages.map((m, i) => (
+                <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`max-w-[85%] rounded-lg px-4 py-2.5 text-sm whitespace-pre-wrap leading-relaxed ${
+                    m.role === 'user'
+                      ? 'bg-bmw-blue text-white'
+                      : 'bg-bmw-gray-light text-gray-800 border border-bmw-border'
+                  }`}>
+                    {m.text}
+                  </div>
+                </div>
+              ))}
+              {chatLoading && (
+                <div className="flex justify-start">
+                  <div className="bg-bmw-gray-light border border-bmw-border rounded-lg px-4 py-2.5 text-sm text-gray-400 animate-pulse">
+                    Thinking...
+                  </div>
+                </div>
+              )}
+              <div ref={chatBottomRef} />
+            </div>
+          )}
+          <div className="flex gap-2">
+            <input
+              type="text"
+              placeholder={`Ask about ${category || 'battery supply chain'}...`}
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleChatSend()}
+              disabled={chatLoading}
+              className="flex-1 border border-bmw-border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-bmw-blue disabled:opacity-60"
+            />
+            <button
+              onClick={handleChatSend}
+              disabled={chatLoading || !chatInput.trim()}
+              className="bg-bmw-blue hover:bg-[#3a88ee] disabled:opacity-60 text-white px-5 py-2 rounded text-sm font-medium transition-colors"
+            >
+              Send
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   )

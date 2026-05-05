@@ -222,6 +222,16 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany })
       crunchbase_url: company.crunchbase_url || '',
       linkedin_url: company.linkedin_url || '',
       pitchbook_url: company.pitchbook_url || '',
+      company_type: company.company_type || '',
+      company_status: company.company_status || '',
+      company_hq_city: company.company_hq_city || '',
+      company_hq_state: company.company_hq_state || '',
+      company_hq_country: company.company_hq_country || '',
+      company_hq_lat: company.company_hq_lat ?? '',
+      company_hq_lng: company.company_hq_lng ?? '',
+      founding_year: company.founding_year ?? '',
+      number_of_employees: company.number_of_employees ?? '',
+      summary: company.summary || '',
     })
     setEditMode(true)
     setSaveMsg(null)
@@ -230,8 +240,15 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany })
   async function handleSaveEdits() {
     setSaving(true)
     setSaveMsg(null)
+    const numericFields = new Set(['company_hq_lat', 'company_hq_lng', 'founding_year', 'number_of_employees'])
+    const cleaned = Object.fromEntries(
+      Object.entries(editValues).map(([k, v]) => [
+        k,
+        numericFields.has(k) ? (v === '' || v === null ? null : Number(v)) : v,
+      ])
+    )
     try {
-      const { data: updated } = await updateCompany(company.id, editValues)
+      const { data: updated } = await updateCompany(company.id, cleaned)
       setCompany(prev => ({ ...prev, ...updated }))
       setEditMode(false)
       setSaveMsg('Saved')
@@ -448,7 +465,7 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany })
               </div>
 
               {/* Links */}
-              {editMode ? (
+              {editMode && (
                 <div className="bg-bmw-gray-light border border-bmw-border rounded-lg p-4 space-y-3">
                   <div className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-1">Edit Links</div>
                   {[
@@ -473,7 +490,50 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany })
                   ))}
                   <p className="text-[11px] text-gray-400">Saved links won't be overwritten when you re-research this company.</p>
                 </div>
-              ) : (
+              )}
+              {editMode && (
+                <div className="bg-bmw-gray-light border border-bmw-border rounded-lg p-4 space-y-3">
+                  <div className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-1">Edit Details</div>
+                  {[
+                    { key: 'company_type', label: 'Type', type: 'text' },
+                    { key: 'company_status', label: 'Status', type: 'text' },
+                    { key: 'company_hq_city', label: 'HQ City', type: 'text' },
+                    { key: 'company_hq_state', label: 'HQ State', type: 'text' },
+                    { key: 'company_hq_country', label: 'HQ Country', type: 'text' },
+                    { key: 'company_hq_lat', label: 'Latitude', type: 'number' },
+                    { key: 'company_hq_lng', label: 'Longitude', type: 'number' },
+                    { key: 'founding_year', label: 'Founded', type: 'number' },
+                    { key: 'number_of_employees', label: 'Employees', type: 'number' },
+                  ].map(({ key, label, type }) => (
+                    <div key={key} className="flex items-center gap-2">
+                      <label className="text-xs text-gray-500 w-24 shrink-0">{label}</label>
+                      <input
+                        type={type}
+                        value={editValues[key] ?? ''}
+                        onChange={e => setEditValues(prev => ({ ...prev, [key]: e.target.value }))}
+                        className="flex-1 border border-bmw-border rounded px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-bmw-blue"
+                      />
+                      {company.manual_overrides?.includes(key) && (
+                        <span className="text-[10px] text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded shrink-0">locked</span>
+                      )}
+                    </div>
+                  ))}
+                  <div className="flex items-start gap-2">
+                    <label className="text-xs text-gray-500 w-24 shrink-0 pt-1.5">Summary</label>
+                    <textarea
+                      value={editValues.summary || ''}
+                      onChange={e => setEditValues(prev => ({ ...prev, summary: e.target.value }))}
+                      rows={3}
+                      className="flex-1 border border-bmw-border rounded px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-bmw-blue resize-none"
+                    />
+                    {company.manual_overrides?.includes('summary') && (
+                      <span className="text-[10px] text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded shrink-0 mt-1.5">locked</span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-gray-400">Saved details won't be overwritten when you re-research this company.</p>
+                </div>
+              )}
+              {!editMode && (
                 <div className="flex flex-wrap gap-3">
                   {company.company_website && (
                     <ExtLink label="Website" url={company.company_website} locked={company.manual_overrides?.includes('company_website')} />
