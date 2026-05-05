@@ -71,9 +71,9 @@ def _run_stale_research():
                 db.commit()
 
                 existing_urls = {
-                    n.url for n in db.query(NewsHeadline.url)
+                    row[0] for row in db.query(NewsHeadline.url)
                     .filter(NewsHeadline.company_id == company.id).all()
-                    if n.url
+                    if row[0]
                 }
                 for article in news:
                     url = article.get("url", "")

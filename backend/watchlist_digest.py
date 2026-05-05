@@ -136,11 +136,11 @@ def run_digest_for_company(db, company_id: int, company_name: str) -> dict:
 
     # Also persist articles to news_headlines so they appear in the News Feed tab
     existing_urls = {
-        n.url for n in
+        row[0] for row in
         db.query(NewsHeadline.url)
         .filter(NewsHeadline.company_id == company_id)
         .all()
-        if n.url
+        if row[0]
     }
     for article in articles:
         url = article.get("url", "")
