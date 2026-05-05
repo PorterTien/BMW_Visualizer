@@ -470,9 +470,9 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany })
                   <div className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-1">Edit Links</div>
                   {[
                     { key: 'company_website', label: 'Website' },
-                    { key: 'crunchbase_url', label: 'Crunchbase' },
+                    { key: 'crunchbase_url', label: 'CB URL' },
                     { key: 'linkedin_url', label: 'LinkedIn' },
-                    { key: 'pitchbook_url', label: 'PitchBook' },
+                    { key: 'pitchbook_url', label: 'PB URL' },
                   ].map(({ key, label }) => (
                     <div key={key} className="flex items-center gap-2">
                       <label className="text-xs text-gray-500 w-24 shrink-0">{label}</label>
@@ -539,13 +539,13 @@ export default function CompanyDetailPage({ companyId, onClose, onOpenCompany })
                     <ExtLink label="Website" url={company.company_website} locked={company.manual_overrides?.includes('company_website')} />
                   )}
                   {company.crunchbase_url && (
-                    <ExtLink label="Crunchbase" url={company.crunchbase_url} locked={company.manual_overrides?.includes('crunchbase_url')} />
+                    <ExtLink label="CB" url={company.crunchbase_url} locked={company.manual_overrides?.includes('crunchbase_url')} />
                   )}
                   {company.linkedin_url && (
                     <ExtLink label="LinkedIn" url={company.linkedin_url} locked={company.manual_overrides?.includes('linkedin_url')} />
                   )}
                   {company.pitchbook_url && (
-                    <ExtLink label="PitchBook" url={company.pitchbook_url} locked={company.manual_overrides?.includes('pitchbook_url')} />
+                    <ExtLink label="PB" url={company.pitchbook_url} locked={company.manual_overrides?.includes('pitchbook_url')} />
                   )}
                   {!company.company_website && !company.crunchbase_url && !company.linkedin_url && !company.pitchbook_url && (
                     <button onClick={startEdit} className="text-xs text-gray-400 hover:text-bmw-blue transition-colors">+ Add links</button>

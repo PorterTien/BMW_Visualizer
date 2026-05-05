@@ -759,7 +759,7 @@ export default function WatchlistPanel({ onOpenCompany, session }) {
                     )}
                     {companyDetail.crunchbase_url && (
                       <a href={companyDetail.crunchbase_url} target="_blank" rel="noreferrer"
-                        className="text-[11px] text-[#0288D1] hover:underline">Crunchbase</a>
+                        className="text-[11px] text-[#0288D1] hover:underline">CB Profile</a>
                     )}
                   </div>
                 </div>

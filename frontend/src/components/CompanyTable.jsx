@@ -148,7 +148,7 @@ function exportCSV(companies) {
     'Market Cap ($M)', 'Revenue ($M)', 'Total Funding ($M)', 'Funding Stage', 'Last Fundraise',
     'Headcount', 'Size Range', 'Partners',
     'Chemistries', 'Feedstock', 'Products', 'GWh Capacity', 'Plant Start',
-    'Parent Company', 'Website', 'LinkedIn', 'Crunchbase', 'PitchBook',
+    'Parent Company', 'Website', 'LinkedIn', 'CB Profile', 'PB Profile',
     'Data Source', 'Last Updated',
     'Summary',
   ]
@@ -711,12 +711,12 @@ export default function CompanyTable({ filters, onOpenCompany }) {
                           </a>
                         )}
                         {c.crunchbase_url && (
-                          <a href={c.crunchbase_url} target="_blank" rel="noreferrer" title="Crunchbase" className="text-[#0288D1] hover:opacity-70">
+                          <a href={c.crunchbase_url} target="_blank" rel="noreferrer" title="CB Profile" className="text-[#0288D1] hover:opacity-70">
                             <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M21.6 0H2.4A2.4 2.4 0 0 0 0 2.4v19.2A2.4 2.4 0 0 0 2.4 24h19.2a2.4 2.4 0 0 0 2.4-2.4V2.4A2.4 2.4 0 0 0 21.6 0zm-8.4 17.04a4.56 4.56 0 0 1-3.24-1.32l-1.2 1.2a.6.6 0 0 1-.84-.84l1.2-1.2A4.56 4.56 0 1 1 13.2 17.04zm0-7.92a3.36 3.36 0 1 0 0 6.72 3.36 3.36 0 0 0 0-6.72zm-6 1.44H5.4a.6.6 0 0 1 0-1.2h1.8a.6.6 0 0 1 0 1.2zm0 2.4H5.4a.6.6 0 0 1 0-1.2h1.8a.6.6 0 1 1 0 1.2zm0 2.4H5.4a.6.6 0 0 1 0-1.2h1.8a.6.6 0 1 1 0 1.2z"/></svg>
                           </a>
                         )}
                         {c.pitchbook_url && (
-                          <a href={c.pitchbook_url} target="_blank" rel="noreferrer" title="PitchBook" className="text-gray-500 hover:opacity-70 font-bold text-[10px] leading-none">PB</a>
+                          <a href={c.pitchbook_url} target="_blank" rel="noreferrer" title="PB Profile" className="text-gray-500 hover:opacity-70 font-bold text-[10px] leading-none">PB</a>
                         )}
                       </div>
                     </td>
