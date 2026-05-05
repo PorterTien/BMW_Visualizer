@@ -18,12 +18,16 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend ./backend
-COPY data ./data
 COPY --from=frontend /app/dist ./frontend/dist
+
+# data/ is created at runtime (XLSX files downloaded from Supabase Storage)
+RUN mkdir -p data uploads
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
 
 EXPOSE 8000
 
-CMD ["sh", "-c", "uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# Single worker — keeps memory within Railway free-tier limits (~512MB).
+# Scale up workers only when upgrading to a paid plan with more RAM.
+CMD ["sh", "-c", "uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1 --timeout-keep-alive 75"]

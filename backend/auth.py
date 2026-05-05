@@ -17,13 +17,23 @@ WATCHLIST_REQUIRES_AUTH = os.getenv("WATCHLIST_REQUIRES_AUTH", "").strip().lower
 }
 SHARED_WATCHLIST_USER = os.getenv("SHARED_WATCHLIST_USER", "shared").strip() or "shared"
 
+# Warn if JWT secret looks like a JWT token itself (common misconfiguration —
+# the env var should be the raw secret from Supabase Settings > API > JWT Secret,
+# not the anon key or service role key which start with "eyJ").
+if SUPABASE_JWT_SECRET.startswith("eyJ"):
+    log.warning(
+        "AUTH: SUPABASE_JWT_SECRET looks like a JWT token (starts with 'eyJ'). "
+        "Set it to the raw JWT secret from Supabase Settings → API → JWT Secret, "
+        "not the anon or service role key. Falling back to Supabase API auth."
+    )
+    SUPABASE_JWT_SECRET = ""
+
 log.info("AUTH INIT: url=%s anon_key=%s jwt_secret=%s",
          bool(SUPABASE_URL), bool(SUPABASE_ANON_KEY), bool(SUPABASE_JWT_SECRET))
 
 
 def get_user_id(authorization: str | None) -> str | None:
     if not authorization or not authorization.startswith("Bearer "):
-        log.info("AUTH: no bearer header")
         return None
 
     token = authorization.removeprefix("Bearer ").strip()
@@ -40,10 +50,10 @@ def get_user_id(authorization: str | None) -> str | None:
                 options={"verify_aud": False},
             )
             uid = payload.get("sub")
-            log.info("AUTH: verified via jwt, uid=%s", uid)
+            log.debug("AUTH: verified via jwt, uid=%s", uid)
             return uid
         except Exception as exc:
-            log.info("AUTH: jwt error: %s", exc)
+            log.debug("AUTH: jwt error: %s", exc)
 
     # Method 2: fallback to Supabase REST API (slower, ~100-500ms network round-trip)
     if SUPABASE_URL and SUPABASE_ANON_KEY:
@@ -53,15 +63,14 @@ def get_user_id(authorization: str | None) -> str | None:
                 headers={"Authorization": f"Bearer {token}", "apikey": SUPABASE_ANON_KEY},
                 timeout=5.0,
             )
-            log.info("AUTH: supabase api status=%d", resp.status_code)
+            log.debug("AUTH: supabase api status=%d", resp.status_code)
             if resp.status_code == 200:
                 uid = resp.json().get("id")
-                log.info("AUTH: verified via api, uid=%s", uid)
+                log.debug("AUTH: verified via api, uid=%s", uid)
                 return uid
         except Exception as exc:
-            log.info("AUTH: supabase api error: %s", exc)
+            log.debug("AUTH: supabase api error: %s", exc)
 
-    log.info("AUTH: all methods failed — no supabase config or invalid token")
     return None
 
 
