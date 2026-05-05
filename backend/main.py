@@ -89,6 +89,9 @@ async def _run_seed(force: bool):
         db = SessionLocal()
         try:
             await asyncio.get_event_loop().run_in_executor(None, import_naatbatt, db, force)
+            # Run coordinate cleanup immediately after NAATBatt import so
+            # temporary wrong-longitude pins don't linger on the map.
+            await asyncio.get_event_loop().run_in_executor(None, fix_coords)
             await asyncio.get_event_loop().run_in_executor(None, import_bbd, db)
             await asyncio.get_event_loop().run_in_executor(None, import_gigafactory, db)
             await asyncio.get_event_loop().run_in_executor(None, import_pitchbook, db)
